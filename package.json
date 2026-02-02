@@ -1,0 +1,16 @@
+{
+  "name": "llm-smart-router",
+  "version": "1.0.0",
+  "description": "Intelligent routing between local LLM and Claude",
+  "main": "router.js",
+  "type": "module",
+  "scripts": {
+    "start": "node router.js",
+    "test": "node test.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "@anthropic-ai/sdk": "^0.30.0",
+    "js-yaml": "^4.1.0"
+  }
+}

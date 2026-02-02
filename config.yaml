@@ -1,0 +1,147 @@
+# LLM Smart Router Configuration
+
+# モデル設定
+models:
+  local:
+    provider: "lmstudio"
+    endpoint: "http://localhost:1234/v1"
+    model: "essentialai/rnj-1"
+    timeout: 30000
+    max_tokens: 4096
+    temperature: 0.7
+  
+  cloud:
+    provider: "anthropic"
+    model: "claude-sonnet-4-5-20250929"
+    max_tokens: 8000
+    temperature: 0.7
+
+# デフォルトモデル
+default: "local"
+
+# 自動切り替え設定
+routing:
+  enabled: true
+  strategy: "intelligent"  # simple / intelligent / hybrid
+  
+  # 確実ルール（最優先）
+  hard_rules:
+    # 業務クリティカル
+    - name: "cm_work"
+      triggers: ["CM", "コスト", "見積", "施主", "工事", "建設"]
+      model: "cloud"
+      reason: "業務は精度最優先"
+      confirm: false
+    
+    # 推し活
+    - name: "oshi_support"
+      triggers: ["KONO", "mina", "りぃ", "雪央", "ももこ", "配信", "ライブチャット", "推し"]
+      model: "cloud"
+      reason: "推し活は妥協なし"
+      confirm: false
+    
+    # セキュリティ
+    - name: "security"
+      triggers: ["攻撃", "脆弱性", "セキュリティ", "侵入"]
+      model: "cloud"
+      reason: "セキュリティは慎重に"
+      confirm: false
+  
+  # ソフトルール（判定材料）
+  soft_rules:
+    # 複雑度ベース
+    - name: "complexity"
+      conditions:
+        keywords: ["アーキテクチャ", "設計", "最適化", "根本原因", "分析"]
+        complexity_threshold: 0.7
+      preference: "cloud"
+      weight: 0.8
+    
+    # サイズベース
+    - name: "large_data"
+      conditions:
+        input_tokens: "> 5000"
+        file_size: "> 50KB"
+      preference: "cloud"
+      weight: 0.6
+    
+    # コスト効率
+    - name: "cost_efficient"
+      conditions:
+        input_tokens: "< 2000"
+        simple_task: true
+      preference: "local"
+      weight: 0.5
+
+  # リアルタイム判定
+  intelligent_routing:
+    enabled: true
+    triage_model: "local"  # 判定自体はローカルで（コスト¥0）
+    confidence_threshold: 0.75
+    
+    triage_prompt: |
+      以下のタスクについて、どちらのLLMが適切か判定してください。
+      
+      【タスク】
+      {input}
+      
+      【判定基準】
+      - local: 簡単な調べもの、要約、整理、単純なコード生成
+      - cloud: 複雑な分析、設計、レビュー、重要な判断、大量データ処理
+      
+      【応答形式（JSON）】
+      {{
+        "model": "local" or "cloud",
+        "confidence": 0.0-1.0,
+        "reason": "理由を簡潔に"
+      }}
+
+# コスト管理
+cost:
+  tracking: true
+  notify_threshold: 50  # ¥50超えたら通知
+  confirm_expensive: true  # 高額時は確認
+  show_estimate: true  # 予想コスト表示
+  
+  pricing:
+    claude_sonnet_input: 0.003  # $per 1K tokens
+    claude_sonnet_output: 0.015
+    local: 0.0
+
+# 通知設定
+notifications:
+  model_switch: true  # モデル切り替え時
+  cost_alert: true
+  performance_stats: true
+  discord_webhook: null  # 必要なら設定
+
+# フォールバック
+fallback:
+  local_failure:
+    action: "switch_to_cloud"
+    notify: true
+    retry_count: 2
+  
+  cloud_failure:
+    action: "use_local"
+    notify: true
+    quality_warning: true
+  
+  both_failure:
+    action: "queue"
+    save_path: "./queue"
+
+# パフォーマンス
+performance:
+  cache_responses: true
+  cache_duration: 3600  # 1時間
+  parallel_triage: false
+  timeout_local: 30000
+  timeout_cloud: 60000
+
+# ログ
+logging:
+  enabled: true
+  path: "./logs"
+  level: "info"  # debug / info / warn / error
+  save_decisions: true

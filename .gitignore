@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+venv/
+.venv/
+
+# Environment
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Logs & Data
+logs/
+queue/
+*.log
+test_results.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Build artifacts
+backups/
+*.exe
+*.spec
