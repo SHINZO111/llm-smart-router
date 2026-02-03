@@ -1,0 +1,76 @@
+# LLM Smart Router Configuration
+# LM Studioモデル自動検出機能対応版
+
+# ============================================
+# モデル設定
+# ============================================
+models:
+  # ローカルモデル（LM Studio）
+  # lmstudio detect/update コマンドで自動更新される
+  local:
+    endpoint: http://localhost:1234/v1
+    model: unknown  # 自動検出で更新
+    temperature: 0.7
+    max_tokens: 2048
+    timeout: 30000
+  
+  # クラウドモデル（Claude）
+  cloud:
+    model: claude-3-sonnet-20240229
+    max_tokens: 4096
+    temperature: 0.7
+  
+  # バックアップクラウドモデル
+  cloud_backup:
+    model: claude-3-haiku-20240307
+    max_tokens: 2048
+    temperature: 0.7
+  
+  # ============================================
+  # LM Studio検出モデル（自動生成）
+  # ============================================
+  # `python -m lmstudio update` で自動追加される
+  # 例:
+  # lmstudio:
+  #   endpoint: http://localhost:1234/v1
+  #   model: loaded-model-id
+  #   temperature: 0.7
+  #   max_tokens: 2048
+  #   timeout: 30000
+  #   name: "Model Name"
+  #   description: "LM Studio loaded model"
+
+# ============================================
+# フォールバック連鎖設定
+# ============================================
+fallback_chain:
+  primary:
+    model: local
+    name: Local LLM (LM Studio)
+  secondary:
+    model: cloud
+    name: Claude
+  tertiary:
+    model: cloud_backup
+    name: Claude Backup
+
+# ============================================
+# コスト設定
+# ============================================
+cost:
+  pricing:
+    claude_sonnet_input: 3.0   # $ per 1M tokens
+    claude_sonnet_output: 15.0 # $ per 1M tokens
+    claude_haiku_input: 0.25
+    claude_haiku_output: 1.25
+  currency_rate: 150  # USD to JPY
+
+# ============================================
+# LM Studioメタデータ（自動生成）
+# ============================================
+# lmstudio_meta:
+#   last_detected: model-id
+#   detected_models:
+#     - model-id-1
+#     - model-id-2
+#   detected_at: timestamp

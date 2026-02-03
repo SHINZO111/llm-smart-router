@@ -2,6 +2,7 @@
 /**
  * LLM Smart Router - Intelligent routing between Local LLM and Claude
  * Author: クラ for 新さん
+ * Version: 4.0.0 - Added Vision support
  */
 
 import fs from 'fs';
@@ -10,6 +11,229 @@ import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { spawn } from 'child_process';
+
+/**
+ * Conversation History Manager - Python DB Handler Integration
+ * Manages automatic saving of conversations to SQLite database
+ */
+class ConversationHistoryManager {
+  constructor(dbPath = './data/conversations.db') {
+    this.dbPath = dbPath;
+    this.currentConversationId = null;
+    this.dbScriptPath = path.join(process.cwd(), 'src/conversation/db_manager.py');
+  }
+
+  /**
+   * Initialize a new conversation or get existing one
+   */
+  async initConversation(title = 'New Conversation', topicId = null) {
+    return new Promise((resolve, reject) => {
+      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+      const args = [
+        '-c',
+        `
+import sys
+sys.path.insert(0, 'src/conversation')
+from db_manager import get_db
+import json
+
+db = get_db('${this.dbPath}')
+conv_id = db.create_conversation('${title}', ${topicId || 'None'})
+print(conv_id)
+        `.trim()
+      ];
+      
+      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
+      let output = '';
+      let error = '';
+      
+      proc.stdout.on('data', (data) => { output += data.toString(); });
+      proc.stderr.on('data', (data) => { error += data.toString(); });
+      
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          console.warn('⚠️  DB initialization failed:', error);
+          resolve(null);
+        } else {
+          this.currentConversationId = parseInt(output.trim());
+          console.log(`📝 Conversation initialized: #${this.currentConversationId}`);
+          resolve(this.currentConversationId);
+        }
+      });
+    });
+  }
+
+  /**
+   * Save a message to the current conversation
+   */
+  async saveMessage(role, content, model = null) {
+    if (!this.currentConversationId) {
+      await this.initConversation();
+    }
+    
+    return new Promise((resolve, reject) => {
+      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+      const escapedContent = content.replace(/'/g, "\\'").replace(/\n/g, '\\n');
+      
+      const args = [
+        '-c',
+        `
+import sys
+sys.path.insert(0, 'src/conversation')
+from db_manager import get_db
+
+db = get_db('${this.dbPath}')
+msg_id = db.add_message(
+    conversation_id=${this.currentConversationId},
+    role='${role}',
+    content='''${escapedContent}''',
+    model=${model ? `'${model}'` : 'None'}
+)
+print(msg_id)
+        `.trim()
+      ];
+      
+      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
+      let output = '';
+      let error = '';
+      
+      proc.stdout.on('data', (data) => { output += data.toString(); });
+      proc.stderr.on('data', (data) => { error += data.toString(); });
+      
+      proc.on('close', (code) => {
+        if (code !== 0) {
+          console.warn('⚠️  Failed to save message:', error);
+          resolve(null);
+        } else {
+          console.log(`💾 Message saved: ${role} (${output.trim()})`);
+          resolve(parseInt(output.trim()));
+        }
+      });
+    });
+  }
+
+  /**
+   * Auto-save hook - Call after message exchange
+   */
+  async autoSave(userInput, assistantResponse, modelUsed) {
+    try {
+      // Save user message
+      await this.saveMessage('user', userInput, null);
+      
+      // Save assistant message
+      await this.saveMessage('assistant', assistantResponse, modelUsed);
+      
+      console.log('💾 Conversation auto-saved');
+      return true;
+    } catch (error) {
+      console.warn('⚠️  Auto-save failed:', error.message);
+      return false;
+    }
+  }
+
+  /**
+   * Update conversation title
+   */
+  async updateTitle(title) {
+    if (!this.currentConversationId) return;
+    
+    return new Promise((resolve, reject) => {
+      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+      
+      const args = [
+        '-c',
+        `
+import sys
+sys.path.insert(0, 'src/conversation')
+from db_manager import get_db
+
+db = get_db('${this.dbPath}')
+db.update_conversation(${this.currentConversationId}, title='${title}')
+print('OK')
+        `.trim()
+      ];
+      
+      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
+      proc.on('close', (code) => {
+        resolve(code === 0);
+      });
+    });
+  }
+
+  /**
+   * Get conversation history
+   */
+  async getHistory(limit = 50) {
+    if (!this.currentConversationId) return [];
+    
+    return new Promise((resolve, reject) => {
+      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+      
+      const args = [
+        '-c',
+        `
+import sys
+import json
+sys.path.insert(0, 'src/conversation')
+from db_manager import get_db
+
+db = get_db('${this.dbPath}')
+messages = db.get_messages(${this.currentConversationId}, limit=${limit})
+print(json.dumps(messages))
+        `.trim()
+      ];
+      
+      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
+      let output = '';
+      
+      proc.stdout.on('data', (data) => { output += data.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0) {
+          try {
+            resolve(JSON.parse(output.trim()));
+          } catch (e) {
+            resolve([]);
+          }
+        } else {
+          resolve([]);
+        }
+      });
+    });
+  }
+
+  /**
+   * Export current conversation to JSON
+   */
+  async exportToJson(filepath) {
+    if (!this.currentConversationId) return null;
+    
+    return new Promise((resolve, reject) => {
+      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+      
+      const args = [
+        '-c',
+        `
+import sys
+sys.path.insert(0, 'src/conversation')
+from json_handler import ConversationJSONHandler
+
+handler = ConversationJSONHandler()
+filepath = handler.export_to_file('${filepath}', conversation_ids=[${this.currentConversationId}])
+print(filepath)
+        `.trim()
+      ];
+      
+      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
+      let output = '';
+      
+      proc.stdout.on('data', (data) => { output += data.toString(); });
+      proc.on('close', (code) => {
+        resolve(code === 0 ? output.trim() : null);
+      });
+    });
+  }
+}
 
 class LLMRouter {
   constructor(configPath = './config.yaml') {
@@ -22,7 +246,27 @@ class LLMRouter {
       local_used: 0,
       cloud_used: 0,
       total_cost: 0,
-      total_saved: 0
+      total_saved: 0,
+      vision_requests: 0
+    };
+    
+    // Initialize conversation history manager
+    this.history = new ConversationHistoryManager(
+      this.config.database?.path || './data/conversations.db'
+    );
+    
+    // Vision対応モデル設定
+    this.visionModels = {
+      claude: {
+        primary: 'claude-3-5-sonnet-20241022',
+        fallback: 'claude-3-opus-20240229',
+        max_tokens: 4096
+      },
+      openai: {
+        primary: 'gpt-4o',
+        fallback: 'gpt-4o-mini',
+        max_tokens: 4096
+      }
     };
   }
 
@@ -35,13 +279,30 @@ class LLMRouter {
     console.log('\n🔄 Smart Router 起動...');
     console.log(`📝 入力: ${input.substring(0, 100)}${input.length > 100 ? '...' : ''}`);
     
+    // 画像がある場合はVisionタスク
+    if (options.imagePath || options.imageBase64) {
+      this.stats.vision_requests++;
+      console.log(`🖼️ 画像検出: Visionモード`);
+      const result = await this.routeVision(input, options);
+      
+      // Auto-save Vision conversation
+      await this.history.autoSave(input, result.response, result.model);
+      
+      return result;
+    }
+    
     try {
       // Phase 1: Hard Rules チェック
       const hardRule = this.checkHardRules(input);
       if (hardRule) {
         console.log(`\n⚡ 確定ルール適用: ${hardRule.name}`);
         console.log(`📌 理由: ${hardRule.reason}`);
-        return await this.executeWithModel(hardRule.model, input, hardRule);
+        const result = await this.executeWithModel(hardRule.model, input, hardRule);
+        
+        // Auto-save after successful response
+        await this.history.autoSave(input, result.response, result.model);
+        
+        return result;
       }
       
       // Phase 2: Intelligent Routing
@@ -54,21 +315,312 @@ class LLMRouter {
         
         // 確信度が低い場合はClaudeへ
         const threshold = this.config.routing.intelligent_routing.confidence_threshold;
+        let result;
         if (decision.model === 'local' && decision.confidence < threshold) {
           console.log(`\n⚠️  確信度が低いため、Claudeに切り替えます`);
-          return await this.executeWithModel('cloud', input, decision);
+          result = await this.executeWithModel('cloud', input, decision);
+        } else {
+          result = await this.executeWithModel(decision.model, input, decision);
         }
         
-        return await this.executeWithModel(decision.model, input, decision);
+        // Auto-save after successful response
+        await this.history.autoSave(input, result.response, result.model);
+        
+        return result;
       }
       
       // Phase 3: Default (fallback)
       console.log(`\n📍 デフォルトモデル使用: ${this.config.default}`);
-      return await this.executeWithModel(this.config.default, input, { reason: 'デフォルト' });
+      const result = await this.executeWithModel(this.config.default, input, { reason: 'デフォルト' });
+      
+      // Auto-save after successful response
+      await this.history.autoSave(input, result.response, result.model);
+      
+      return result;
       
     } catch (error) {
       console.error(`\n❌ エラー: ${error.message}`);
       return await this.handleError(error, input);
+    }
+  }
+
+  /**
+   * Visionタスクのルーティング
+   * 画像ありの場合はVision対応モデルを自動選択
+   */
+  async routeVision(input, options) {
+    console.log('\n🎯 Vision Routing...');
+    
+    // Vision対応モデルを選択（Claude優先、GPT-4oフォールバック）
+    const visionModel = this.selectVisionModel();
+    console.log(`📷 Vision Model: ${visionModel.provider} - ${visionModel.model}`);
+    
+    try {
+      if (visionModel.provider === 'claude') {
+        return await this.executeClaudeVision(input, options, visionModel.model);
+      } else {
+        return await this.executeOpenAIVision(input, options, visionModel.model);
+      }
+    } catch (error) {
+      console.error(`\n❌ Visionエラー: ${error.message}`);
+      // フォールバック
+      const fallbackModel = visionModel.provider === 'claude' 
+        ? { provider: 'openai', model: this.visionModels.openai.primary }
+        : { provider: 'claude', model: this.visionModels.claude.primary };
+      
+      console.log(`🔄 フォールバック: ${fallbackModel.provider}`);
+      
+      if (fallbackModel.provider === 'claude') {
+        return await this.executeClaudeVision(input, options, fallbackModel.model);
+      } else {
+        return await this.executeOpenAIVision(input, options, fallbackModel.model);
+      }
+    }
+  }
+
+  /**
+   * Vision対応モデルを選択
+   * 優先順位: Claude > GPT-4o
+   */
+  selectVisionModel() {
+    const claudeKey = process.env.ANTHROPIC_API_KEY;
+    const openaiKey = process.env.OPENAI_API_KEY;
+    
+    // Claudeが優先
+    if (claudeKey) {
+      return {
+        provider: 'claude',
+        model: this.visionModels.claude.primary
+      };
+    }
+    
+    // フォールバック: GPT-4o
+    if (openaiKey) {
+      return {
+        provider: 'openai',
+        model: this.visionModels.openai.primary
+      };
+    }
+    
+    // どちらもない場合はClaudeをデフォルトとして返す（エラーになるが明示的に）
+    return {
+      provider: 'claude',
+      model: this.visionModels.claude.primary
+    };
+  }
+
+  /**
+   * Claude Vision API実行
+   */
+  async executeClaudeVision(input, options, model) {
+    const startTime = Date.now();
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🚀 Claude Vision実行: ${model}`);
+    console.log(`${'='.repeat(60)}`);
+    
+    // 画像を読み込み
+    let imageBase64;
+    let mediaType = 'image/jpeg';
+    
+    if (options.imageBase64) {
+      imageBase64 = options.imageBase64;
+    } else if (options.imagePath && fs.existsSync(options.imagePath)) {
+      const imageData = fs.readFileSync(options.imagePath);
+      imageBase64 = imageData.toString('base64');
+      // ファイル拡張子からMIMEタイプを推定
+      const ext = path.extname(options.imagePath).toLowerCase();
+      mediaType = this.getMimeType(ext);
+    } else {
+      throw new Error('No image data provided');
+    }
+    
+    const message = await this.anthropic.messages.create({
+      model: model,
+      max_tokens: this.visionModels.claude.max_tokens,
+      temperature: 0.7,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: mediaType,
+              data: imageBase64
+            }
+          },
+          {
+            type: 'text',
+            text: input || 'この画像について説明してください。'
+          }
+        ]
+      }]
+    });
+    
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    
+    // コスト計算（Visionは通常の1.5倍程度）
+    const cost = this.calculateVisionCost(message.usage, 'claude');
+    this.stats.total_cost += cost.total;
+    this.stats.cloud_used++;
+    
+    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`✅ Vision完了 (Claude)`);
+    console.log(`⏱️  処理時間: ${elapsed}秒`);
+    console.log(`📊 トークン: ${message.usage.input_tokens} in / ${message.usage.output_tokens} out`);
+    console.log(`💰 コスト: ¥${cost.total.toFixed(2)}`);
+    console.log(`${'─'.repeat(60)}\n`);
+    
+    return {
+      model: `claude-vision-${model}`,
+      response: message.content[0].text,
+      metadata: {
+        elapsed,
+        tokens: {
+          input: message.usage.input_tokens,
+          output: message.usage.output_tokens
+        },
+        cost: cost.total,
+        provider: 'claude',
+        vision: true
+      }
+    };
+  }
+
+  /**
+   * OpenAI Vision API実行 (GPT-4o)
+   */
+  async executeOpenAIVision(input, options, model) {
+    const startTime = Date.now();
+    const apiKey = process.env.OPENAI_API_KEY;
+    
+    if (!apiKey) {
+      throw new Error('OpenAI API key not found');
+    }
+    
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`🚀 GPT-4o Vision実行: ${model}`);
+    console.log(`${'='.repeat(60)}`);
+    
+    // 画像を読み込み
+    let imageBase64;
+    let mediaType = 'image/jpeg';
+    
+    if (options.imageBase64) {
+      imageBase64 = options.imageBase64;
+    } else if (options.imagePath && fs.existsSync(options.imagePath)) {
+      const imageData = fs.readFileSync(options.imagePath);
+      imageBase64 = imageData.toString('base64');
+      const ext = path.extname(options.imagePath).toLowerCase();
+      mediaType = this.getMimeType(ext);
+    } else {
+      throw new Error('No image data provided');
+    }
+    
+    const response = await axios.post(
+      'https://api.openai.com/v1/chat/completions',
+      {
+        model: model,
+        max_tokens: this.visionModels.openai.max_tokens,
+        temperature: 0.7,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'text',
+              text: input || 'この画像について説明してください。'
+            },
+            {
+              type: 'image_url',
+              image_url: {
+                url: `data:${mediaType};base64,${imageBase64}`,
+                detail: 'auto'
+              }
+            }
+          ]
+        }]
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json'
+        },
+        timeout: 120000
+      }
+    );
+    
+    const result = response.data;
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    
+    const tokens = {
+      input: result.usage?.prompt_tokens || 0,
+      output: result.usage?.completion_tokens || 0
+    };
+    
+    const cost = this.calculateVisionCost(tokens, 'openai');
+    this.stats.total_cost += cost.total;
+    this.stats.cloud_used++;
+    
+    console.log(`\n${'─'.repeat(60)}`);
+    console.log(`✅ Vision完了 (GPT-4o)`);
+    console.log(`⏱️  処理時間: ${elapsed}秒`);
+    console.log(`📊 トークン: ${tokens.input} in / ${tokens.output} out`);
+    console.log(`💰 コスト: ¥${cost.total.toFixed(2)}`);
+    console.log(`${'─'.repeat(60)}\n`);
+    
+    return {
+      model: `gpt-vision-${model}`,
+      response: result.choices[0].message.content,
+      metadata: {
+        elapsed,
+        tokens,
+        cost: cost.total,
+        provider: 'openai',
+        vision: true
+      }
+    };
+  }
+
+  /**
+   * MIMEタイプ取得
+   */
+  getMimeType(ext) {
+    const mapping = {
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.gif': 'image/gif',
+      '.webp': 'image/webp',
+      '.bmp': 'image/bmp'
+    };
+    return mapping[ext] || 'image/jpeg';
+  }
+
+  /**
+   * Visionコスト計算
+   */
+  calculateVisionCost(usage, provider) {
+    const rate = 150; // ドル→円
+    
+    if (provider === 'claude') {
+      // Claude 3.5 Sonnet Vision
+      const inputCost = (usage.input_tokens / 1000) * 3.0; // $3/M tokens
+      const outputCost = (usage.output_tokens / 1000) * 15.0; // $15/M tokens
+      return {
+        input: inputCost * rate,
+        output: outputCost * rate,
+        total: (inputCost + outputCost) * rate
+      };
+    } else {
+      // GPT-4o Vision
+      const inputCost = (usage.input_tokens / 1000) * 5.0; // $5/M tokens
+      const outputCost = (usage.output_tokens / 1000) * 15.0; // $15/M tokens
+      return {
+        input: inputCost * rate,
+        output: outputCost * rate,
+        total: (inputCost + outputCost) * rate
+      };
     }
   }
 
@@ -289,6 +841,7 @@ class LLMRouter {
     console.log(`📊 統計情報`);
     console.log(`${'='.repeat(60)}`);
     console.log(`総リクエスト: ${this.stats.total_requests}`);
+    console.log(`Visionリクエスト: ${this.stats.vision_requests}`);
     console.log(`ローカル使用: ${this.stats.local_used} (${(this.stats.local_used/this.stats.total_requests*100).toFixed(1)}%)`);
     console.log(`Claude使用: ${this.stats.cloud_used} (${(this.stats.cloud_used/this.stats.total_requests*100).toFixed(1)}%)`);
     console.log(`総コスト: ¥${this.stats.total_cost.toFixed(2)}`);
@@ -304,14 +857,45 @@ export default LLMRouter;
 const __filename = fileURLToPath(import.meta.url);
 if (process.argv[1] && path.resolve(__filename) === path.resolve(process.argv[1])) {
   const router = new LLMRouter();
-  const input = process.argv.slice(2).join(' ');
   
-  if (!input) {
-    console.log('Usage: node router.js <your question>');
+  // コマンドライン引数の解析
+  const args = process.argv.slice(2);
+  let input = '';
+  let imagePath = null;
+  let imageBase64 = null;
+  let modelType = null;
+  
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--image' && i + 1 < args.length) {
+      imagePath = args[i + 1];
+      i++;
+    } else if (args[i] === '--model' && i + 1 < args.length) {
+      modelType = args[i + 1];
+      i++;
+    } else if (args[i] === '--base64' && i + 1 < args.length) {
+      imageBase64 = args[i + 1];
+      i++;
+    } else if (!input) {
+      input = args[i];
+    }
+  }
+  
+  if (!input && !imagePath && !imageBase64) {
+    console.log('Usage: node router.js <your question> [--image <path>] [--model <model>]');
+    console.log('');
+    console.log('Options:');
+    console.log('  --image <path>   Image file path');
+    console.log('  --base64 <data>  Base64 encoded image');
+    console.log('  --model <model>  Model type (auto/local/claude)');
     process.exit(1);
   }
   
-  router.route(input).then(result => {
+  const options = {};
+  if (imagePath) options.imagePath = imagePath;
+  if (imageBase64) options.imageBase64 = imageBase64;
+  if (modelType) options.modelType = modelType;
+  
+  router.route(input, options).then(result => {
     console.log('\n📄 応答:\n');
     console.log(result.response);
     console.log('\n');

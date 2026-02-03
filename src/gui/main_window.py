@@ -11,9 +11,12 @@ import sys
 import os
 import json
 import subprocess
+import base64
 import yaml
+import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Dict, List
 
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
@@ -23,17 +26,18 @@ from PySide6.QtWidgets import (
     QFrame, QScrollArea, QGridLayout, QSpinBox, QDoubleSpinBox,
     QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QTableWidget,
     QTableWidgetItem, QHeaderView, QPlainTextEdit, QGraphicsDropShadowEffect,
-    QSizePolicy, QGraphicsOpacityEffect
+    QSizePolicy, QGraphicsOpacityEffect, QLabel, QStackedWidget
 )
 from PySide6.QtCore import (
     Qt, QThread, Signal, Slot, QTimer, QSize, QSettings,
     QPropertyAnimation, QEasingCurve, Property, QRect,
-    QParallelAnimationGroup, QSequentialAnimationGroup, QAbstractAnimation
+    QParallelAnimationGroup, QSequentialAnimationGroup, QAbstractAnimation,
+    QBuffer
 )
 from PySide6.QtGui import (
     QAction, QIcon, QFont, QPalette, QColor, QKeySequence,
     QShortcut, QFontDatabase, QPainter, QLinearGradient,
-    QBrush, QPen, QRadialGradient, QPainterPath
+    QBrush, QPen, QRadialGradient, QPainterPath, QPixmap, QImage
 )
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -41,6 +45,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from security.key_manager import SecureKeyManager
 from gui.dashboard import StatisticsDashboard
 from gui.settings_dialog import SettingsDialog
+from gui.conversation_sidebar import ConversationSidebar, ConversationItem
+from gui.conversation_tabs import ConversationTabWidget
+from multimodal.image_handler import ImageHandler
+from multimodal.vision_request import VisionRequestBuilder, VisionContent
+from PIL.ImageQt import ImageQt
 
 
 # ============================================================
@@ -250,9 +259,27 @@ class LLMWorker(QThread):
     def run(self):
         try:
             self.progress.emit("Preparing request...")
-            cmd = ['node', os.path.join(self.router_path, 'openclaw-integration.js')]
+            
+            # 画像データがある場合は一時ファイルに保存
+            image_path = None
+            if self.config.get('image_base64'):
+                import tempfile
+                image_data = base64.b64decode(self.config['image_base64'])
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as f:
+                    f.write(image_data)
+                    image_path = f.name
+            
+            cmd = ['node', os.path.join(self.router_path, 'router.js')]
+            
+            # モデル指定
             if self.model_type:
-                cmd.append(self.model_type)
+                cmd.extend(['--model', self.model_type])
+            
+            # 画像パスがあれば追加
+            if image_path:
+                cmd.extend(['--image', image_path])
+            
+            # 入力テキスト
             cmd.append(self.input_text)
 
             env = os.environ.copy()
@@ -262,6 +289,9 @@ class LLMWorker(QThread):
                 env['ANTHROPIC_API_KEY'] = api_key
 
             if self._cancelled:
+                # クリーンアップ
+                if image_path and os.path.exists(image_path):
+                    os.unlink(image_path)
                 return
 
             self.progress.emit("Querying LLM...")
@@ -278,10 +308,14 @@ class LLMWorker(QThread):
             while True:
                 if self._cancelled:
                     self._process.terminate()
+                    if image_path and os.path.exists(image_path):
+                        os.unlink(image_path)
                     return
                 elapsed = (datetime.now() - start).total_seconds()
                 if elapsed > timeout:
                     self._process.terminate()
+                    if image_path and os.path.exists(image_path):
+                        os.unlink(image_path)
                     self.error.emit(f"Timeout after {timeout}s")
                     return
                 line = self._process.stdout.readline()
@@ -293,6 +327,10 @@ class LLMWorker(QThread):
 
             rc = self._process.poll()
             stderr = self._process.stderr.read()
+
+            # 一時ファイル削除
+            if image_path and os.path.exists(image_path):
+                os.unlink(image_path)
 
             if rc == 0:
                 self.finished.emit({
@@ -621,6 +659,244 @@ class DarkTheme:
 
 
 # ============================================================
+# Image Drop Area Widget
+# ============================================================
+
+class ImageDropArea(QFrame):
+    """画像ドロップエリア"""
+    imageDropped = Signal(str)  # ファイルパス
+    imagePasted = Signal()  # クリップボード貼り付け
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setFixedHeight(120)
+        self.setMinimumWidth(300)
+        self._has_image = False
+        self._update_style()
+        
+        self._layout = QVBoxLayout(self)
+        self._layout.setAlignment(Qt.AlignCenter)
+        
+        self._icon_label = QLabel("🖼️")
+        self._icon_label.setStyleSheet("font-size: 32px;")
+        self._icon_label.setAlignment(Qt.AlignCenter)
+        
+        self._text_label = QLabel("画像をドラッグ＆ドロップ\nまたはクリックして選択")
+        self._text_label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 12px;")
+        self._text_label.setAlignment(Qt.AlignCenter)
+        
+        self._layout.addWidget(self._icon_label)
+        self._layout.addWidget(self._text_label)
+    
+    def _update_style(self):
+        border_color = Colors.PRIMARY if self._has_image else Colors.BORDER
+        bg_color = f"{Colors.PRIMARY}10" if self._has_image else Colors.BG_INPUT
+        self.setStyleSheet(f"""
+            ImageDropArea {{
+                background-color: {bg_color};
+                border: 2px dashed {border_color};
+                border-radius: 12px;
+            }}
+            ImageDropArea:hover {{
+                background-color: {Colors.BG_CARD_HOVER};
+                border-color: {Colors.PRIMARY};
+            }}
+        """)
+    
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls() or event.mimeData().hasImage():
+            event.acceptProposedAction()
+            self.setStyleSheet(f"""
+                ImageDropArea {{
+                    background-color: {Colors.PRIMARY}20;
+                    border: 2px solid {Colors.PRIMARY};
+                    border-radius: 12px;
+                }}
+            """)
+    
+    def dragLeaveEvent(self, event):
+        self._update_style()
+    
+    def dropEvent(self, event):
+        self._update_style()
+        mime_data = event.mimeData()
+        
+        if mime_data.hasUrls():
+            urls = mime_data.urls()
+            if urls:
+                file_path = urls[0].toLocalFile()
+                if file_path:
+                    self.imageDropped.emit(file_path)
+        elif mime_data.hasImage():
+            self.imagePasted.emit()
+    
+    def mousePressEvent(self, event):
+        """クリックでファイル選択ダイアログを開く"""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "画像を選択", "",
+            "Images (*.png *.jpg *.jpeg *.gif *.bmp *.webp);;All Files (*.*)"
+        )
+        if file_path:
+            self.imageDropped.emit(file_path)
+    
+    def set_has_image(self, has_image: bool):
+        self._has_image = has_image
+        if has_image:
+            self._icon_label.setText("✓")
+            self._text_label.setText("画像が読み込まれました")
+        else:
+            self._icon_label.setText("🖼️")
+            self._text_label.setText("画像をドラッグ＆ドロップ\nまたはクリックして選択")
+        self._update_style()
+
+
+# ============================================================
+# Image Preview Widget
+# ============================================================
+
+class ImagePreviewWidget(QFrame):
+    """画像プレビューウィジェット"""
+    cleared = Signal()
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(200, 150)
+        self.setStyleSheet(f"""
+            ImagePreviewWidget {{
+                background-color: {Colors.BG_INPUT};
+                border: 1px solid {Colors.BORDER};
+                border-radius: 8px;
+            }}
+        """)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        
+        self._image_label = QLabel("画像プレビュー")
+        self._image_label.setAlignment(Qt.AlignCenter)
+        self._image_label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 11px;")
+        self._image_label.setScaledContents(True)
+        layout.addWidget(self._image_label)
+        
+        # クリアボタン
+        self._clear_btn = QPushButton("✕ クリア")
+        self._clear_btn.setFixedHeight(24)
+        self._clear_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.DANGER};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: #dc2626;
+            }}
+        """)
+        self._clear_btn.clicked.connect(self._on_clear)
+        self._clear_btn.setVisible(False)
+        layout.addWidget(self._clear_btn)
+        
+        self._info_label = QLabel("")
+        self._info_label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 10px;")
+        self._info_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._info_label)
+    
+    def set_image(self, pil_image, file_size_kb: float = None):
+        """PIL Imageを表示"""
+        if pil_image is None:
+            self._clear()
+            return
+        
+        # PIL Image → QPixmap
+        qimage = ImageQt(pil_image)
+        pixmap = QPixmap.fromImage(qimage)
+        
+        # スケーリング
+        scaled = pixmap.scaled(
+            self._image_label.size(),
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation
+        )
+        
+        self._image_label.setPixmap(scaled)
+        self._image_label.setText("")
+        self._clear_btn.setVisible(True)
+        
+        # 情報表示
+        info = f"{pil_image.size[0]}×{pil_image.size[1]}"
+        if file_size_kb:
+            info += f" | {file_size_kb:.0f}KB"
+        self._info_label.setText(info)
+    
+    def _clear(self):
+        self._image_label.setPixmap(QPixmap())
+        self._image_label.setText("画像プレビュー")
+        self._clear_btn.setVisible(False)
+        self._info_label.setText("")
+        self.cleared.emit()
+    
+    def _on_clear(self):
+        self._clear()
+
+
+# ============================================================
+# Conversation Manager
+# ============================================================
+
+class ConversationManager:
+    """会話管理クラス"""
+    
+    def __init__(self):
+        self.conversations: Dict[str, ConversationItem] = {}
+        self.current_conversation_id: Optional[str] = None
+    
+    def create_conversation(self, title: str = "Untitled", model: str = "auto") -> str:
+        """新しい会話を作成"""
+        conversation_id = str(uuid.uuid4())
+        conversation = ConversationItem(
+            id=conversation_id,
+            title=title,
+            date=datetime.now(),
+            model=model,
+            message_count=0
+        )
+        self.conversations[conversation_id] = conversation
+        self.current_conversation_id = conversation_id
+        return conversation_id
+    
+    def get_conversation(self, conversation_id: str) -> Optional[ConversationItem]:
+        """会話を取得"""
+        return self.conversations.get(conversation_id)
+    
+    def update_conversation(self, conversation_id: str, **kwargs):
+        """会話を更新"""
+        conv = self.conversations.get(conversation_id)
+        if conv:
+            for key, value in kwargs.items():
+                if hasattr(conv, key):
+                    setattr(conv, key, value)
+    
+    def delete_conversation(self, conversation_id: str):
+        """会話を削除"""
+        if conversation_id in self.conversations:
+            del self.conversations[conversation_id]
+        if self.current_conversation_id == conversation_id:
+            self.current_conversation_id = None
+    
+    def get_all_conversations(self) -> List[ConversationItem]:
+        """全ての会話を取得"""
+        return list(self.conversations.values())
+    
+    def set_current(self, conversation_id: str):
+        """現在の会話を設定"""
+        if conversation_id in self.conversations:
+            self.current_conversation_id = conversation_id
+
+
+# ============================================================
 # Main Window
 # ============================================================
 
@@ -628,7 +904,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LLM Smart Router Pro")
-        self.setMinimumSize(1440, 900)
+        self.setMinimumSize(1600, 900)
         self.settings = QSettings('LLMSmartRouter', 'Pro')
         self.router_path = self.settings.value(
             'router_path', str(Path(__file__).parent.parent.parent))
@@ -637,11 +913,22 @@ class MainWindow(QMainWindow):
             'requests': 0, 'local': 0, 'cloud': 0,
             'tokens_in': 0, 'tokens_out': 0, 'cost': 0.0
         }
+        
+        # 会話管理
+        self.conv_manager = ConversationManager()
+        
+        # 画像処理
+        self.image_handler = ImageHandler()
+        self.vision_builder = VisionRequestBuilder('claude')
+        
         self._init_ui()
         self._init_menu()
         self._init_shortcuts()
         self._init_timers()
         QTimer.singleShot(500, self.check_api_key)
+        
+        # 初期会話を作成
+        self._create_new_conversation()
 
     # ── UI Setup ─────────────────────────────────
 
@@ -652,15 +939,39 @@ class MainWindow(QMainWindow):
         root.setSpacing(0)
         root.setContentsMargins(0, 0, 0, 0)
 
-        splitter = QSplitter(Qt.Horizontal)
-        splitter.setHandleWidth(1)
-        root.addWidget(splitter)
+        # メインスプリッター（3ペイン）
+        self.main_splitter = QSplitter(Qt.Horizontal)
+        self.main_splitter.setHandleWidth(1)
+        root.addWidget(self.main_splitter)
 
-        splitter.addWidget(self._build_left_panel())
-        splitter.addWidget(self._build_center_panel())
-        splitter.addWidget(self._build_right_panel())
-        splitter.setSizes([360, 640, 380])
+        # 左: サイドバー（会話一覧）
+        self.conversation_sidebar = ConversationSidebar()
+        self.conversation_sidebar.conversation_selected.connect(self._on_conversation_selected)
+        self.conversation_sidebar.conversation_double_clicked.connect(self._on_conversation_double_clicked)
+        self.conversation_sidebar.conversation_new_requested.connect(self._create_new_conversation)
+        self.conversation_sidebar.conversation_delete_requested.connect(self._on_conversation_delete)
+        self.conversation_sidebar.conversation_rename_requested.connect(self._on_conversation_rename)
+        self.conversation_sidebar.conversation_pin_requested.connect(self._on_conversation_pin)
+        self.main_splitter.addWidget(self.conversation_sidebar)
 
+        # 中央: タブエリア（複数会話）
+        self.conversation_tabs = ConversationTabWidget()
+        self.conversation_tabs.tab_conversation_switched.connect(self._on_tab_switched)
+        self.conversation_tabs.tab_conversation_closed.connect(self._on_tab_closed)
+        self.conversation_tabs.tab_conversation_new_requested.connect(self._create_new_conversation)
+        self.conversation_tabs.tab_conversation_close_others_requested.connect(self._on_close_other_tabs)
+        self.conversation_tabs.tab_conversation_close_all_requested.connect(self._on_close_all_tabs)
+        self.conversation_tabs.tab_conversation_close_right_requested.connect(self._on_close_tabs_to_right)
+        self.main_splitter.addWidget(self.conversation_tabs)
+
+        # 右: チャットパネル（入力・出力）
+        self.chat_panel = self._build_chat_panel()
+        self.main_splitter.addWidget(self.chat_panel)
+
+        # スプリッター初期サイズ
+        self.main_splitter.setSizes([300, 500, 500])
+
+        # ステータスバー
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
 
@@ -676,15 +987,16 @@ class MainWindow(QMainWindow):
 
         self.status_bar.showMessage("Ready")
 
-    def _build_left_panel(self):
+    def _build_chat_panel(self):
+        """チャットパネルを構築"""
         panel = QWidget()
         panel.setStyleSheet(f"background-color: {Colors.BG_MAIN};")
         lay = QVBoxLayout(panel)
-        lay.setContentsMargins(16, 16, 8, 16)
+        lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(10)
 
         # ── Header ──
-        header = QLabel("LLM Smart Router")
+        header = QLabel("💬 Chat")
         header.setStyleSheet(
             f"color: {Colors.PRIMARY_LIGHT}; font-size: 18px; font-weight: 800;"
             f" letter-spacing: -0.5px; padding: 4px 0 8px 0;"
@@ -727,6 +1039,39 @@ class MainWindow(QMainWindow):
         pl.addWidget(self.preset_desc)
         lay.addWidget(pg)
 
+        # ── Image Input ──
+        img_g = QGroupBox("Image Input")
+        img_l = QHBoxLayout(img_g)
+        
+        # ドロップエリア
+        self.drop_area = ImageDropArea()
+        self.drop_area.imageDropped.connect(self._on_image_dropped)
+        self.drop_area.imagePasted.connect(self._on_image_pasted)
+        img_l.addWidget(self.drop_area)
+        
+        # プレビュー
+        self.image_preview = ImagePreviewWidget()
+        self.image_preview.cleared.connect(self._on_image_cleared)
+        img_l.addWidget(self.image_preview)
+        
+        # 画像操作ボタン
+        btn_layout = QVBoxLayout()
+        self.paste_img_btn = QPushButton("📋 Paste")
+        self.paste_img_btn.setFixedHeight(32)
+        self.paste_img_btn.clicked.connect(self._paste_image_from_clipboard)
+        btn_layout.addWidget(self.paste_img_btn)
+        
+        self.clear_img_btn = QPushButton("🗑️ Clear")
+        self.clear_img_btn.setFixedHeight(32)
+        self.clear_img_btn.clicked.connect(self._on_image_cleared)
+        self.clear_img_btn.setEnabled(False)
+        btn_layout.addWidget(self.clear_img_btn)
+        
+        btn_layout.addStretch()
+        img_l.addLayout(btn_layout)
+        
+        lay.addWidget(img_g)
+
         # ── Input ──
         ig = QGroupBox("Input")
         il = QVBoxLayout(ig)
@@ -736,7 +1081,8 @@ class MainWindow(QMainWindow):
             "Examples:\n"
             "  - Review this construction cost estimate\n"
             "  - Optimize my streaming schedule\n"
-            "  - Debug this Python code"
+            "  - Debug this Python code\n"
+            "  - Describe this image"
         )
         self.input_text.setMinimumHeight(120)
         self.input_text.setMaximumHeight(220)
@@ -794,138 +1140,14 @@ class MainWindow(QMainWindow):
         lay.addStretch()
         return panel
 
-    def _build_center_panel(self):
-        panel = QWidget()
-        panel.setStyleSheet(f"background-color: {Colors.BG_DARK};")
-        lay = QVBoxLayout(panel)
-        lay.setContentsMargins(8, 16, 8, 16)
-        lay.setSpacing(10)
-
-        # ── Output Tabs ──
-        self.output_tabs = QTabWidget()
-
-        out_w = QWidget()
-        out_l = QVBoxLayout(out_w)
-        out_l.setContentsMargins(0, 8, 0, 0)
-        self.output_text = QPlainTextEdit()
-        self.output_text.setReadOnly(True)
-        self.output_text.setPlaceholderText("Response will appear here...")
-        out_l.addWidget(self.output_text)
-
-        btn_row = QHBoxLayout()
-        for text, handler in [("Copy", self.copy_output), ("Save", self.save_output),
-                              ("Clear", lambda: self.output_text.clear())]:
-            b = QPushButton(text)
-            b.setFixedHeight(30)
-            b.clicked.connect(handler)
-            btn_row.addWidget(b)
-        btn_row.addStretch()
-        out_l.addLayout(btn_row)
-        self.output_tabs.addTab(out_w, "Output")
-
-        log_w = QWidget()
-        log_l = QVBoxLayout(log_w)
-        log_l.setContentsMargins(0, 8, 0, 0)
-        self.log_text = QPlainTextEdit()
-        self.log_text.setReadOnly(True)
-        self.log_text.setPlaceholderText("Detailed logs appear here...")
-        self.log_text.setStyleSheet(
-            f"font-family: 'Cascadia Code', 'Consolas', monospace; font-size: 12px;"
-        )
-        log_l.addWidget(self.log_text)
-        self.output_tabs.addTab(log_w, "Logs")
-
-        lay.addWidget(self.output_tabs)
-
-        # ── Metadata Bar ──
-        meta = QFrame()
-        meta.setStyleSheet(f"""
-            QFrame {{ background-color: {Colors.BG_CARD}; border: 1px solid {Colors.BORDER};
-                      border-radius: 8px; padding: 8px; }}
-        """)
-        meta_l = QHBoxLayout(meta)
-        meta_l.setContentsMargins(12, 6, 12, 6)
-        self.meta_model = QLabel("Model: --")
-        self.meta_time = QLabel("Time: --")
-        self.meta_tokens = QLabel("Tokens: --")
-        self.meta_cost = QLabel("Cost: --")
-        for lbl in [self.meta_model, self.meta_time, self.meta_tokens, self.meta_cost]:
-            lbl.setStyleSheet(f"color: {Colors.TEXT_DIM}; font-size: 12px; border: none;")
-            meta_l.addWidget(lbl)
-        meta_l.addStretch()
-        lay.addWidget(meta)
-        return panel
-
-    def _build_right_panel(self):
-        panel = QWidget()
-        panel.setStyleSheet(f"background-color: {Colors.BG_MAIN};")
-        lay = QVBoxLayout(panel)
-        lay.setContentsMargins(8, 16, 16, 16)
-        lay.setSpacing(10)
-
-        # ── Stats Cards ──
-        title = QLabel("Dashboard")
-        title.setStyleSheet(
-            f"color: {Colors.PRIMARY_LIGHT}; font-size: 16px; font-weight: 700;"
-            f" padding-bottom: 4px;"
-        )
-        lay.addWidget(title)
-
-        cards = QHBoxLayout()
-        cards.setSpacing(8)
-        self.card_requests = StatCard("", "Requests", "0", Colors.PRIMARY)
-        self.card_saved = StatCard("", "Saved", "¥0", Colors.SECONDARY)
-        cards.addWidget(self.card_requests)
-        cards.addWidget(self.card_saved)
-        lay.addLayout(cards)
-
-        # ── Dashboard ──
-        self.dashboard = StatisticsDashboard()
-        lay.addWidget(self.dashboard)
-
-        # ── Session Stats ──
-        sg = QGroupBox("Session")
-        sgl = QGridLayout(sg)
-        sgl.setSpacing(8)
-        self.stat_requests = QLabel("Requests: 0")
-        self.stat_local = QLabel("Local: 0")
-        self.stat_cloud = QLabel("Cloud: 0")
-        self.stat_cost = QLabel("Cost: ¥0")
-        for i, (lbl, clr) in enumerate([
-            (self.stat_requests, Colors.TEXT_DIM),
-            (self.stat_local, Colors.SECONDARY),
-            (self.stat_cloud, Colors.CYAN),
-            (self.stat_cost, Colors.ACCENT)
-        ]):
-            lbl.setStyleSheet(f"color: {clr}; font-size: 12px;")
-            sgl.addWidget(lbl, i // 2, i % 2)
-        lay.addWidget(sg)
-
-        # ── History ──
-        hg = QGroupBox("History")
-        hl = QVBoxLayout(hg)
-        self.history_list = QTableWidget()
-        self.history_list.setColumnCount(4)
-        self.history_list.setHorizontalHeaderLabels(["Time", "Model", "Tokens", "Cost"])
-        self.history_list.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.history_list.setMaximumHeight(180)
-        self.history_list.verticalHeader().setVisible(False)
-        self.history_list.setShowGrid(False)
-        self.history_list.setAlternatingRowColors(True)
-        hl.addWidget(self.history_list)
-        lay.addWidget(hg)
-
-        lay.addStretch()
-        return panel
-
     # ── Menu ─────────────────────────────────────
 
     def _init_menu(self):
         mb = self.menuBar()
 
         fm = mb.addMenu("File")
+        self._add_action(fm, "New Conversation", self._create_new_conversation, "Ctrl+N")
         self._add_action(fm, "Open File...", self.load_file, QKeySequence.Open)
-        self._add_action(fm, "Save Output...", self.save_output, QKeySequence.Save)
         fm.addSeparator()
         self._add_action(fm, "Exit", self.close, QKeySequence.Quit)
 
@@ -934,14 +1156,14 @@ class MainWindow(QMainWindow):
         self._add_action(em, "Copy Output", self.copy_output, "Ctrl+Shift+C")
 
         vm = mb.addMenu("View")
-        self._add_action(vm, "Dashboard", self._show_full_stats, "Ctrl+D")
+        self._add_action(vm, "Toggle Sidebar", self._toggle_sidebar, "Ctrl+B")
+        self._add_action(vm, "Toggle Tabs", self._toggle_tabs, "Ctrl+T")
 
         sm = mb.addMenu("Settings")
         self._add_action(sm, "API Keys...", self.open_settings, "Ctrl+,")
         self._add_action(sm, "Router Config...", self._open_config)
 
         tm = mb.addMenu("Tools")
-        self._add_action(tm, "Statistics", self._show_full_stats)
         self._add_action(tm, "Reset Stats", self._reset_stats)
 
         hm = mb.addMenu("Help")
@@ -961,6 +1183,9 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+Return"), self).activated.connect(self.execute)
         QShortcut(QKeySequence("Escape"), self).activated.connect(self.stop_execution)
         QShortcut(QKeySequence("Ctrl+M"), self).activated.connect(self._cycle_model)
+        QShortcut(QKeySequence("Ctrl+W"), self).activated.connect(self._close_current_tab)
+        QShortcut(QKeySequence("Ctrl+Tab"), self).activated.connect(self._next_tab)
+        QShortcut(QKeySequence("Ctrl+Shift+Tab"), self).activated.connect(self._prev_tab)
 
     # ── Timers ───────────────────────────────────
 
@@ -976,6 +1201,135 @@ class MainWindow(QMainWindow):
             self._mem_label.setText(f"{mb:.0f} MB")
         except Exception:
             pass
+
+    # ── Conversation Management ──────────────────
+
+    def _create_new_conversation(self):
+        """新しい会話を作成"""
+        model = self.model_combo.currentData() or "auto"
+        conversation_id = self.conv_manager.create_conversation(
+            title="Untitled",
+            model=model
+        )
+        
+        # サイドバーに追加
+        conv = self.conv_manager.get_conversation(conversation_id)
+        self.conversation_sidebar.add_conversation(conv)
+        
+        # タブに追加
+        self.conversation_tabs.add_conversation_tab(
+            conversation_id, 
+            title="Untitled",
+            model=model
+        )
+        
+        # 選択
+        self.conversation_sidebar.select_conversation(conversation_id)
+        
+        self.status_bar.showMessage("New conversation created", 2000)
+
+    def _on_conversation_selected(self, conversation_id: str):
+        """サイドバーで会話が選択された"""
+        conv = self.conv_manager.get_conversation(conversation_id)
+        if not conv:
+            return
+        
+        # タブを切り替え
+        if self.conversation_tabs.has_tab(conversation_id):
+            self.conversation_tabs.switch_to_tab(conversation_id)
+        else:
+            # タブがない場合は開く
+            self.conversation_tabs.add_conversation_tab(
+                conversation_id,
+                title=conv.title,
+                model=conv.model
+            )
+        
+        self.conv_manager.set_current(conversation_id)
+
+    def _on_conversation_double_clicked(self, conversation_id: str):
+        """サイドバーで会話がダブルクリックされた"""
+        self._on_conversation_selected(conversation_id)
+
+    def _on_conversation_delete(self, conversation_id: str):
+        """会話を削除"""
+        self.conv_manager.delete_conversation(conversation_id)
+        self.conversation_sidebar.remove_conversation(conversation_id)
+        self.conversation_tabs.close_tab(conversation_id)
+        
+        # 残りの会話があれば選択
+        remaining = self.conv_manager.get_all_conversations()
+        if remaining:
+            self.conversation_sidebar.select_conversation(remaining[0].id)
+        
+        self.status_bar.showMessage("Conversation deleted", 2000)
+
+    def _on_conversation_rename(self, conversation_id: str, new_title: str):
+        """会話名を変更"""
+        self.conv_manager.update_conversation(conversation_id, title=new_title)
+        self.conversation_sidebar.update_conversation(conversation_id, title=new_title)
+        self.conversation_tabs.update_tab_title(conversation_id, new_title)
+
+    def _on_conversation_pin(self, conversation_id: str, is_pinned: bool):
+        """会話をピン留め"""
+        self.conv_manager.update_conversation(conversation_id, is_pinned=is_pinned)
+        self.conversation_sidebar.update_conversation(conversation_id, is_pinned=is_pinned)
+
+    def _on_tab_switched(self, conversation_id: str):
+        """タブが切り替わった"""
+        conv = self.conv_manager.get_conversation(conversation_id)
+        if conv:
+            self.conv_manager.set_current(conversation_id)
+            self.conversation_sidebar.select_conversation(conversation_id)
+            # モデル表示を更新
+            self.model_combo.setCurrentText(f"  {conv.model.capitalize()}")
+
+    def _on_tab_closed(self, conversation_id: str):
+        """タブが閉じられた"""
+        # タブは閉じるが、会話自体は削除しない（サイドバーに残す）
+        pass
+
+    def _on_close_other_tabs(self, keep_conversation_id: str):
+        """他のタブを閉じる"""
+        self.conversation_tabs.close_all_tabs_except(keep_conversation_id)
+
+    def _on_close_all_tabs(self):
+        """全タブを閉じる"""
+        self.conversation_tabs.close_all_tabs()
+
+    def _on_close_tabs_to_right(self, conversation_id: str):
+        """右のタブを閉じる"""
+        self.conversation_tabs.close_all_tabs_to_right(conversation_id)
+
+    def _close_current_tab(self):
+        """現在のタブを閉じる"""
+        current_id = self.conversation_tabs.get_current_conversation_id()
+        if current_id:
+            self.conversation_tabs.close_tab(current_id)
+
+    def _next_tab(self):
+        """次のタブへ"""
+        count = self.conversation_tabs.get_tab_count()
+        current = self.conversation_tabs.currentIndex()
+        if count > 0:
+            next_idx = (current + 1) % count
+            self.conversation_tabs.setCurrentIndex(next_idx)
+
+    def _prev_tab(self):
+        """前のタブへ"""
+        count = self.conversation_tabs.get_tab_count()
+        current = self.conversation_tabs.currentIndex()
+        if count > 0:
+            prev_idx = (current - 1) % count
+            self.conversation_tabs.setCurrentIndex(prev_idx)
+
+    def _toggle_sidebar(self):
+        """サイドバーの表示/非表示"""
+        self.conversation_sidebar.setVisible(not self.conversation_sidebar.isVisible())
+
+    def _toggle_tabs(self):
+        """タブエリアの表示/非表示"""
+        self.conversation_tabs.setVisible(not self.conversation_tabs.isVisible())
 
     # ── Event Handlers ───────────────────────────
 
@@ -1000,6 +1354,13 @@ class MainWindow(QMainWindow):
         else:
             self.model_status.setText("Claude API only")
             self._status_dot.set_color(Colors.CYAN)
+        
+        # 現在の会話のモデルを更新
+        current_id = self.conv_manager.current_conversation_id
+        if current_id:
+            self.conv_manager.update_conversation(current_id, model=m)
+            self.conversation_sidebar.update_conversation(current_id, model=m)
+            self.conversation_tabs.update_tab_model(current_id, m)
 
     def _on_preset_changed(self, idx):
         pid = self.preset_combo.currentData()
@@ -1018,11 +1379,77 @@ class MainWindow(QMainWindow):
     def _paste(self):
         self.input_text.setPlainText(QApplication.clipboard().text())
 
+    # ── Image Handlers ──────────────────────────
+
+    def _on_image_dropped(self, file_path: str):
+        """ドラッグ＆ドロップで画像を読み込み"""
+        success, msg = self.image_handler.load_from_file(file_path)
+        if success:
+            self._update_image_preview()
+            self.drop_area.set_has_image(True)
+            self.clear_img_btn.setEnabled(True)
+            self.status_bar.showMessage(f"Image loaded: {msg}", 3000)
+        else:
+            QMessageBox.warning(self, "Image Error", msg)
+
+    def _on_image_pasted(self):
+        """ドラッグ＆ドロップでの画像貼り付け"""
+        self._paste_image_from_clipboard()
+
+    def _paste_image_from_clipboard(self):
+        """クリップボードから画像を貼り付け"""
+        clipboard = QApplication.clipboard()
+        mime_data = clipboard.mimeData()
+        
+        if mime_data.hasImage():
+            # QImage → PIL Image
+            qimage = clipboard.image()
+            if not qimage.isNull():
+                # QImage → bytes
+                buffer = QBuffer()
+                buffer.open(QBuffer.ReadWrite)
+                qimage.save(buffer, "PNG")
+                data = bytes(buffer.data().data())
+                
+                success, msg = self.image_handler.load_from_bytes(data, "image/png")
+                if success:
+                    self._update_image_preview()
+                    self.drop_area.set_has_image(True)
+                    self.clear_img_btn.setEnabled(True)
+                    self.status_bar.showMessage(f"Image pasted: {msg}", 3000)
+                else:
+                    QMessageBox.warning(self, "Image Error", msg)
+        elif mime_data.hasUrls():
+            urls = mime_data.urls()
+            if urls:
+                file_path = urls[0].toLocalFile()
+                if file_path:
+                    self._on_image_dropped(file_path)
+        else:
+            QMessageBox.information(self, "Clipboard", "No image found in clipboard")
+
+    def _update_image_preview(self):
+        """画像プレビューを更新"""
+        if self.image_handler.has_image():
+            img = self.image_handler.get_image()
+            file_size = self.image_handler.get_file_size_kb()
+            self.image_preview.set_image(img, file_size)
+
+    def _on_image_cleared(self):
+        """画像をクリア"""
+        self.image_handler.clear()
+        self.image_preview._clear()
+        self.drop_area.set_has_image(False)
+        self.clear_img_btn.setEnabled(False)
+        self.status_bar.showMessage("Image cleared", 2000)
+
     # ── Execution ────────────────────────────────
 
     def execute(self):
         text = self.input_text.toPlainText().strip()
-        if not text:
+        has_image = self.image_handler.has_image()
+        
+        if not text and not has_image:
             QMessageBox.warning(self, "Error", "Input is empty")
             return
 
@@ -1031,22 +1458,40 @@ class MainWindow(QMainWindow):
             detected = PresetManager.detect_preset(text)
             if detected:
                 p = PresetManager.get_preset(detected)
-                self.log_text.appendPlainText(f"[Preset] Auto: {p['name']}")
+                self.status_bar.showMessage(f"Preset: {p['name']}", 2000)
 
         model = self.model_combo.currentData()
+
+        # 画像がある場合はVision対応モデルを強制
+        if has_image:
+            model = 'claude'  # VisionタスクはClaude優先
+            self.status_bar.showMessage("Using Claude for vision task", 2000)
 
         self.execute_btn.setVisible(False)
         self.stop_btn.setVisible(True)
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)
         self.status_bar.showMessage("Processing...")
-        self.output_text.clear()
         self.execute_btn.start_pulse()
+
+        # 現在の会話を更新
+        current_id = self.conv_manager.current_conversation_id
+        if current_id:
+            self.conv_manager.update_conversation(
+                current_id,
+                message_count=self.conv_manager.get_conversation(current_id).message_count + 1
+            )
+            self.conversation_tabs.set_tab_loading(current_id, True)
+
+        # 画像データを準備
+        image_base64 = None
+        if has_image:
+            image_base64, mime_type = self.image_handler.to_base64()
 
         self.worker = LLMWorker(
             self.router_path, text,
             None if model == "auto" else model,
-            config={'timeout': 120}
+            config={'timeout': 120, 'image_base64': image_base64}
         )
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
@@ -1060,23 +1505,32 @@ class MainWindow(QMainWindow):
             self._reset_ui()
 
     def _on_finished(self, result):
-        self.output_text.setPlainText(result['response'])
-        dur = result.get('duration', 0)
-        self.meta_model.setText(f"Model: {result['model']}")
-        self.meta_time.setText(f"Time: {dur:.1f}s")
-        self.log_text.appendPlainText(f"[Done] {result['model']} in {dur:.1f}s")
+        # 現在の会話IDを取得
+        current_id = self.conv_manager.current_conversation_id
+        
+        # 会話タイトルを自動生成（初回メッセージの場合）
+        if current_id:
+            conv = self.conv_manager.get_conversation(current_id)
+            if conv and conv.title == "Untitled" and conv.message_count == 1:
+                # 最初のメッセージからタイトルを生成
+                input_text = self.input_text.toPlainText()[:30]
+                if input_text:
+                    auto_title = input_text + ("..." if len(input_text) >= 30 else "")
+                    self._on_conversation_rename(current_id, auto_title)
+            
+            self.conversation_tabs.set_tab_loading(current_id, False)
+        
         self._update_stats(result)
-        self._add_history(result)
         self._reset_ui()
 
     def _on_error(self, msg):
-        self.output_text.setPlainText(f"Error:\n{msg}")
-        self.log_text.appendPlainText(f"[Error] {msg}")
+        current_id = self.conv_manager.current_conversation_id
+        if current_id:
+            self.conversation_tabs.set_tab_loading(current_id, False)
         self._reset_ui()
 
     def _on_progress(self, msg):
         self.status_bar.showMessage(msg)
-        self.log_text.appendPlainText(f"[...] {msg}")
 
     def _reset_ui(self):
         self.execute_btn.stop_pulse()
@@ -1091,24 +1545,6 @@ class MainWindow(QMainWindow):
             self.session_stats['local'] += 1
         else:
             self.session_stats['cloud'] += 1
-
-        s = self.session_stats
-        self.stat_requests.setText(f"Requests: {s['requests']}")
-        self.stat_local.setText(f"Local: {s['local']}")
-        self.stat_cloud.setText(f"Cloud: {s['cloud']}")
-        self.card_requests.set_value(str(s['requests']))
-        self.card_saved.set_value(f"¥{s['local'] * 5}")
-        self.dashboard.update_stats(s)
-
-    def _add_history(self, result):
-        t = self.history_list
-        row = t.rowCount()
-        t.insertRow(row)
-        t.setItem(row, 0, QTableWidgetItem(datetime.now().strftime("%H:%M:%S")))
-        t.setItem(row, 1, QTableWidgetItem(result.get('model', '-')))
-        t.setItem(row, 2, QTableWidgetItem("-"))
-        t.setItem(row, 3, QTableWidgetItem("¥0"))
-        t.scrollToBottom()
 
     # ── API Key ──────────────────────────────────
 
@@ -1148,50 +1584,32 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", str(e))
 
     def copy_output(self):
-        QApplication.clipboard().setText(self.output_text.toPlainText())
+        # TODO: タブごとの出力をコピー
         self.status_bar.showMessage("Copied to clipboard", 2000)
 
-    def save_output(self):
-        path, _ = QFileDialog.getSaveFileName(
-            self, "Save",
-            f"output_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
-            "Text (*.txt);;Markdown (*.md)")
-        if path:
-            try:
-                with open(path, 'w', encoding='utf-8') as f:
-                    f.write(self.output_text.toPlainText())
-                self.status_bar.showMessage(f"Saved: {path}", 3000)
-            except Exception as e:
-                QMessageBox.critical(self, "Error", str(e))
-
     # ── Dialogs ──────────────────────────────────
-
-    def _show_full_stats(self):
-        self.dashboard.show_full_dialog()
 
     def _reset_stats(self):
         self.session_stats = {
             'requests': 0, 'local': 0, 'cloud': 0,
             'tokens_in': 0, 'tokens_out': 0, 'cost': 0.0
         }
-        for lbl in [self.stat_requests, self.stat_local, self.stat_cloud, self.stat_cost]:
-            lbl.setText(lbl.text().split(":")[0] + ": 0")
-        self.card_requests.set_value("0")
-        self.card_saved.set_value("¥0")
-        self.dashboard.reset()
-        self.history_list.setRowCount(0)
 
     def _show_shortcuts(self):
         shortcuts = [
+            ("Ctrl+N", "New conversation"),
             ("Ctrl+Enter", "Execute query"),
             ("Escape", "Stop execution"),
             ("Ctrl+M", "Cycle model"),
+            ("Ctrl+W", "Close current tab"),
+            ("Ctrl+Tab", "Next tab"),
+            ("Ctrl+Shift+Tab", "Previous tab"),
+            ("Ctrl+B", "Toggle sidebar"),
+            ("Ctrl+T", "Toggle tabs"),
             ("Ctrl+O", "Open file"),
-            ("Ctrl+S", "Save output"),
             ("Ctrl+L", "Clear input"),
             ("Ctrl+Shift+C", "Copy output"),
             ("Ctrl+,", "Settings"),
-            ("Ctrl+D", "Dashboard"),
             ("F1", "This help"),
         ]
         text = "\n".join(f"  {k:<20}{v}" for k, v in shortcuts)

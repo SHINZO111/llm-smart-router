@@ -9,6 +9,7 @@
 - 🎯 **確実ルール**: CM業務・推し活などは確実にClaude使用
 - 📊 **統計管理**: コスト・節約額・使用率をリアルタイム表示
 - 🔄 **自動フォールバック**: 障害時は自動で代替モデルに切り替え
+- 💬 **会話履歴管理**: 自動保存・検索・トピック別整理・エクスポート対応
 
 ## セットアップ
 
@@ -76,6 +77,7 @@ node test.js
 | 機能 | 説明 |
 |------|------|
 | 🤖 **モデル切替** | 自動/ローカル/クラウドをワンクリックで切替 |
+| 💬 **会話履歴** | 自動保存・全文検索・トピック別整理・JSONエクスポート |
 | 📋 **プリセット** | CM業務、推し活、コーディングなど用途別テンプレート |
 | 📊 **ダッシュボード** | 使用量、コスト、節約額をリアルタイム表示 |
 | 🔐 **APIキー管理** | Windows/macOS標準キーストアに安全に保存 |
@@ -87,6 +89,9 @@ node test.js
 |------|------|
 | `Ctrl+Enter` | 実行 |
 | `Esc` | 停止 |
+| `Ctrl+N` | 新規会話 |
+| `Ctrl+F` | 会話を検索 |
+| `Delete` | 選択した会話を削除 |
 | `Ctrl+O` | ファイルを開く |
 | `Ctrl+S` | 結果を保存 |
 
@@ -187,6 +192,38 @@ F:\llm-smart-router\
 ### カスタムロジック追加
 
 `router.js` の `intelligentTriage()` メソッドを編集。
+
+### テスト実行
+
+```bash
+# すべてのテストを実行
+python tests/test_suite.py
+
+# 会話履歴管理のテスト
+python tests/test_conversation.py
+
+# UIコンポーネントのテスト
+python tests/test_conversation_ui.py
+```
+
+### ドキュメント
+
+| ドキュメント | 内容 |
+|-------------|------|
+| [USER_MANUAL.md](docs/USER_MANUAL.md) | ユーザーマニュアル |
+| [conversation_history_guide.md](docs/conversation_history_guide.md) | 会話履歴管理ガイド |
+
+### スクリーンショット
+
+UIスクリーンショットは `docs/screenshots/` に配置してください：
+
+```
+docs/screenshots/
+├── main_window.png      # メインウィンドウ
+├── conversation_list.png # 会話一覧
+├── search_demo.png      # 検索機能
+└── topic_filter.png     # トピックフィルタ
+```
 
 ---
 

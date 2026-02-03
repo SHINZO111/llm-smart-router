@@ -2,6 +2,7 @@
 
 # モデル設定
 models:
+  # ローカルLLM（既存）
   local:
     provider: "lmstudio"
     endpoint: "http://localhost:1234/v1"
@@ -10,14 +11,79 @@ models:
     max_tokens: 4096
     temperature: 0.7
   
+  # Claude（既存）
   cloud:
     provider: "anthropic"
     model: "claude-sonnet-4-5-20250929"
     max_tokens: 8000
     temperature: 0.7
+  
+  # === 新モデル（Checkpoint 1 で追加）===
+  
+  # Kimi
+  kimi:
+    provider: "openrouter"
+    endpoint: "https://openrouter.ai/api/v1"
+    model: "kimi-coding/k2p5"
+    timeout: 60000
+    max_tokens: 8192
+    temperature: 0.7
+    api_key_env: "OPENROUTER_API_KEY"
+    priority: 2  # 0=最高, 数値が高いほど優先度低い
+    capabilities:
+      - coding
+      - reasoning
+      - long_context
+    cost_profile:
+      input_per_1k: 0.002
+      output_per_1k: 0.008
+  
+  # GPT-4o
+  gpt4o:
+    provider: "openai"
+    endpoint: "https://api.openai.com/v1"
+    model: "gpt-4o"
+    timeout: 60000
+    max_tokens: 4096
+    temperature: 0.7
+    api_key_env: "OPENAI_API_KEY"
+    priority: 2
+    capabilities:
+      - vision
+      - coding
+      - reasoning
+      - json_mode
+    cost_profile:
+      input_per_1k: 0.005
+      output_per_1k: 0.015
+  
+  # Gemini
+  gemini:
+    provider: "google"
+    endpoint: "https://generativelanguage.googleapis.com/v1beta"
+    model: "gemini-pro"
+    timeout: 60000
+    max_tokens: 8192
+    temperature: 0.7
+    api_key_env: "GOOGLE_API_KEY"
+    priority: 2
+    capabilities:
+      - long_context
+      - multimodal
+      - reasoning
+    cost_profile:
+      input_per_1k: 0.001
+      output_per_1k: 0.003
 
 # デフォルトモデル
 default: "local"
+
+# モデルグループ（ルーティング用）
+model_groups:
+  local_group: ["local"]  # 既存ローカル
+  cloud_group: ["cloud", "kimi", "gpt4o", "gemini"]  # クラウド系全て
+  coding_group: ["kimi", "gpt4o", "cloud"]  # コーディング向け
+  cost_efficient_group: ["gemini", "kimi", "gpt4o", "cloud"]  # コスト効率重視
 
 # 自動切り替え設定
 routing:
@@ -46,6 +112,22 @@ routing:
       model: "cloud"
       reason: "セキュリティは慎重に"
       confirm: false
+    
+    # コーディングタスク（新モデル対応）
+    - name: "coding_task"
+      triggers: ["コード", "プログラム", "実装", "リファクタ", "デバッグ", "Python", "JavaScript", "TypeScript"]
+      model: "kimi"
+      reason: "コーディングはKimiが得意"
+      confirm: false
+      fallback: "gpt4o"  # フォールバック先
+    
+    # 長文脈処理
+    - name: "long_context"
+      triggers: ["長文", "ドキュメント全文", "一括分析", "大量データ"]
+      model: "gemini"
+      reason: "Geminiは長文脈に強い"
+      confirm: true  # 確認あり
+      fallback: "kimi"
   
   # ソフトルール（判定材料）
   soft_rules:
@@ -80,20 +162,24 @@ routing:
     confidence_threshold: 0.75
     
     triage_prompt: |
-      以下のタスクについて、どちらのLLMが適切か判定してください。
+      以下のタスクについて、適切なLLMを判定してください。
       
       【タスク】
       {input}
       
-      【判定基準】
-      - local: 簡単な調べもの、要約、整理、単純なコード生成
-      - cloud: 複雑な分析、設計、レビュー、重要な判断、大量データ処理
+      【選択肢】
+      - local: 簡単な調べもの、要約、整理、単純なコード生成（無料）
+      - cloud: 複雑な分析、設計、レビュー、重要な判断（Claude）
+      - kimi: コーディング、推論、長文脈（コスト効率良好）
+      - gpt4o: マルチモーダル（画像処理）、JSONモード
+      - gemini: 超長文脈（1Mトークン）、低コスト
       
       【応答形式（JSON）】
       {{
-        "model": "local" or "cloud",
+        "model": "local" or "cloud" or "kimi" or "gpt4o" or "gemini",
         "confidence": 0.0-1.0,
-        "reason": "理由を簡潔に"
+        "reason": "理由を簡潔に",
+        "alternatives": ["第二候補モデル名"]
       }}
 
 # コスト管理
@@ -106,6 +192,12 @@ cost:
   pricing:
     claude_sonnet_input: 0.003  # $per 1K tokens
     claude_sonnet_output: 0.015
+    kimi_input: 0.002
+    kimi_output: 0.008
+    gpt4o_input: 0.005
+    gpt4o_output: 0.015
+    gemini_input: 0.001
+    gemini_output: 0.003
     local: 0.0
 
 # 通知設定
@@ -138,6 +230,75 @@ performance:
   parallel_triage: false
   timeout_local: 30000
   timeout_cloud: 60000
+
+# キャッシュ設定（Checkpoint 4 で追加）
+cache:
+  enabled: true  # キャッシュ無効化可能
+  
+  # SQLiteキャッシュ設定
+  sqlite:
+    path: "./cache/llm_cache.db"
+    ttl: 3600  # デフォルトTTL（秒）= 1時間
+    max_entries: 10000  # 最大エントリ数
+    similarity_threshold: 0.85  # 類似検索閾値（0.0-1.0）
+  
+  # キャッシュ戦略
+  strategies:
+    # 完全一致キャッシュ
+    exact_match:
+      enabled: true
+      ttl: 3600
+    
+    # 類似検索キャッシュ
+    similarity_match:
+      enabled: true
+      ttl: 1800  # 類似は短めに
+      threshold: 0.85  # 85%以上類似でヒット
+  
+  # 除外設定（キャッシュしないパターン）
+  exclusions:
+    # セキュリティ関連
+    - patterns: ["パスワード", "APIキー", "秘密鍵", "トークン"]
+      reason: "機密情報"
+    
+    # リアルタイム情報
+    - patterns: ["今何時", "今の天気", "現在の", "最新の"]
+      reason: "リアルタイム情報"
+    
+    # 短いクエリ
+    - min_length: 5
+      reason: "短すぎるクエリ"
+
+# 非同期処理設定（Checkpoint 4 で追加）
+async:
+  enabled: true
+  
+  # 同時接続制限
+  max_concurrent: 5  # セマフォ制限
+  max_workers: 4     # スレッドプールサイズ
+  
+  # タイムアウト
+  default_timeout: 60.0
+  
+  # バッチ処理
+  batch:
+    enabled: true
+    default_batch_size: 10
+    max_parallel: 5
+
+# 接続プール設定（Checkpoint 4 で追加）
+connection_pool:
+  enabled: true
+  
+  # プール設定
+  pool_size: 10
+  pool_timeout: 30.0
+  keepalive_timeout: 60.0
+  max_connections: 100
+  max_connections_per_host: 10
+  
+  # SSL設定
+  ssl_verification: true
 
 # ログ
 logging:

@@ -1,0 +1,22 @@
+# LLM Smart Router - Conversation History API
+# FastAPI dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+pydantic>=2.0.0
+python-multipart>=0.0.6
+
+# CLI dependencies
+click>=8.1.0
+rich>=13.0.0
+
+# Database
+sqlite3-python>=0.4.0
+
+# Utilities
+python-dateutil>=2.8.2
+aiofiles>=23.2.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.21.0
+httpx>=0.25.0
