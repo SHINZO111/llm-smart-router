@@ -35,3 +35,6 @@ nul
 backups/
 *.exe
 *.spec
+
+# Nested repo artifact
+llm-smart-router/

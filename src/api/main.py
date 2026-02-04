@@ -3,6 +3,7 @@ FastAPI Application Entry Point
 
 LLM Smart Router - Conversation History API Server
 """
+import os
 import sys
 from pathlib import Path
 
@@ -37,12 +38,18 @@ app = FastAPI(
 )
 
 # CORS middleware
+# Production: Set ALLOWED_ORIGINS environment variable (comma-separated)
+# Example: ALLOWED_ORIGINS=http://localhost:3000,https://myapp.com
+_allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8080").split(",")
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
+    allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
 )
 
 # Include routers
@@ -67,10 +74,11 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
+    _debug = os.getenv("DEBUG", "false").lower() == "true"
     uvicorn.run(
         "api.main:app",
         host="0.0.0.0",
         port=8000,
-        reload=True,
-        log_level="info"
+        reload=_debug,
+        log_level="debug" if _debug else "info"
     )

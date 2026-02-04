@@ -27,9 +27,9 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, MagicMock, call
 
 # パス設定
-sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, 'F:\\llm-smart-router')
-sys.path.insert(0, 'F:\\llm-smart-router\\src')
+_project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(_project_root))
+sys.path.insert(0, str(_project_root / "src"))
 
 import unittest
 from typing import Optional, List, Dict, Any
@@ -587,10 +587,11 @@ class TestConversationView(unittest.TestCase):
     
     def setUp(self):
         self.manager = MockConversationManager()
-        self.conv = self.manager.create_conversation(first_message="Test")
+        # first_message=Noneでメッセージ数を明示的に制御
+        self.conv = self.manager.create_conversation(first_message=None)
         self.manager.add_message(self.conv.id, MessageRole.USER, "Hello")
         self.manager.add_message(self.conv.id, MessageRole.ASSISTANT, "Hi!")
-        
+
         self.view = MockConversationView(self.manager)
     
     def test_load_conversation(self):

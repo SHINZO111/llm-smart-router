@@ -3,13 +3,18 @@ FastAPI API Routes
 
 REST API endpoints for conversation history management
 """
+import json
 import sys
+from functools import wraps
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
 from pydantic import BaseModel, Field
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Add project root to path
 project_root = Path(__file__).parent.parent
@@ -17,16 +22,77 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 
 from conversation.conversation_manager import ConversationManager
-from conversation.json_handler import ConversationJSONHandler
 from models.conversation import ConversationStatus, Topic
 from models.message import MessageRole
 
 
 router = APIRouter()
 
-# Initialize managers
+# Initialize manager
 conversation_manager = ConversationManager()
-json_handler = ConversationJSONHandler()
+
+# ==================== Constants ====================
+
+VALID_SORT_FIELDS = {"created_at", "updated_at", "title", "message_count"}
+
+
+# ==================== Helpers ====================
+
+def _handle_errors(func):
+    """共通エラーハンドリングデコレータ"""
+    @wraps(func)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await func(*args, **kwargs)
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Internal error: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="Internal server error")
+    return wrapper
+
+
+def _get_conversation_or_404(conversation_id: str):
+    """会話を取得、存在しなければ404"""
+    conv = conversation_manager.get_conversation(conversation_id)
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return conv
+
+
+def _get_topic_or_404(topic_id: str):
+    """トピックを取得、存在しなければ404"""
+    topic = conversation_manager.get_topic(topic_id)
+    if not topic:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    return topic
+
+
+def _parse_enum(enum_cls, value: str, field_name: str):
+    """Enumバリデーション共通化"""
+    try:
+        return enum_cls(value.lower())
+    except ValueError:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name}: {value}")
+
+
+def _serialize_conversation_export(conv, messages):
+    """会話エクスポート用のdict変換"""
+    return {
+        "id": conv.id,
+        "title": conv.title,
+        "created_at": conv.created_at.isoformat() if conv.created_at else None,
+        "updated_at": conv.updated_at.isoformat() if conv.updated_at else None,
+        "messages": [
+            {
+                "role": msg.role.value,
+                "content": msg.content.text,
+                "model": getattr(msg, 'model', None),
+                "timestamp": msg.created_at.isoformat() if msg.created_at else None,
+            }
+            for msg in messages
+        ]
+    }
 
 
 # ==================== Pydantic Models ====================
@@ -91,6 +157,7 @@ class ImportResponse(BaseModel):
 # ==================== Conversation Endpoints ====================
 
 @router.get("/conversations", response_model=List[Dict[str, Any]])
+@_handle_errors
 async def list_conversations(
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
     topic_id: Optional[str] = Query(None, description="Filter by topic ID"),
@@ -103,7 +170,7 @@ async def list_conversations(
 ):
     """
     Get list of conversations with filtering and pagination
-    
+
     - **user_id**: Filter by user ID
     - **topic_id**: Filter by topic ID (use 'null' for no topic)
     - **status**: Filter by status (active, paused, closed, archived)
@@ -113,108 +180,85 @@ async def list_conversations(
     - **limit**: Maximum number of results
     - **offset**: Pagination offset
     """
-    try:
-        # Handle topic_id='null' to filter for conversations without topic
-        topic_filter = topic_id
-        if topic_id == 'null':
-            topic_filter = None
-        
-        # Parse status
-        status_filter = None
-        if status:
-            try:
-                status_filter = ConversationStatus(status.lower())
-            except ValueError:
-                raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
-        
-        conversations = conversation_manager.list_conversations(
-            user_id=user_id,
-            topic_id=topic_filter,
-            status=status_filter,
-            search_query=search,
-            sort_by=sort_by,
-            ascending=ascending,
-            limit=limit,
-            offset=offset
-        )
-        
-        return [conv.to_dict() for conv in conversations]
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    # Validate sort_by
+    if sort_by not in VALID_SORT_FIELDS:
+        raise HTTPException(status_code=400, detail=f"Invalid sort_by: {sort_by}")
+
+    # Handle topic_id='null' to filter for conversations without topic
+    topic_filter = topic_id
+    if topic_id == 'null':
+        topic_filter = None
+
+    # Parse status
+    status_filter = _parse_enum(ConversationStatus, status, "status") if status else None
+
+    conversations = conversation_manager.list_conversations(
+        user_id=user_id,
+        topic_id=topic_filter,
+        status=status_filter,
+        search_query=search,
+        sort_by=sort_by,
+        ascending=ascending,
+        limit=limit,
+        offset=offset
+    )
+
+    return [conv.to_dict() for conv in conversations]
 
 
 @router.get("/conversations/{conversation_id}", response_model=Dict[str, Any])
 async def get_conversation(conversation_id: str):
     """Get a specific conversation by ID"""
-    conversation = conversation_manager.get_conversation(conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    return conversation.to_dict()
+    return _get_conversation_or_404(conversation_id).to_dict()
 
 
 @router.post("/conversations", response_model=Dict[str, Any], status_code=201)
+@_handle_errors
 async def create_conversation(request: ConversationCreate):
     """Create a new conversation"""
-    try:
-        conversation = conversation_manager.create_conversation(
-            user_id=request.user_id,
-            first_message=request.first_message,
-            topic_id=request.topic_id
+    conversation = conversation_manager.create_conversation(
+        user_id=request.user_id,
+        first_message=request.first_message,
+        topic_id=request.topic_id
+    )
+
+    # Override title if provided
+    if request.title:
+        conversation = conversation_manager.update_conversation(
+            conversation_id=conversation.id,
+            title=request.title
         )
-        
-        # Override title if provided
-        if request.title:
-            conversation = conversation_manager.update_conversation(
-                conversation_id=conversation.id,
-                title=request.title
-            )
-        
-        return conversation.to_dict()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    return conversation.to_dict()
 
 
 @router.put("/conversations/{conversation_id}", response_model=Dict[str, Any])
+@_handle_errors
 async def update_conversation(conversation_id: str, request: ConversationUpdate):
     """Update a conversation"""
-    # Check if conversation exists
-    existing = conversation_manager.get_conversation(conversation_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
+    _get_conversation_or_404(conversation_id)
+
     # Parse status
-    status_enum = None
-    if request.status:
-        try:
-            status_enum = ConversationStatus(request.status.lower())
-        except ValueError:
-            raise HTTPException(status_code=400, detail=f"Invalid status: {request.status}")
-    
-    try:
-        updated = conversation_manager.update_conversation(
-            conversation_id=conversation_id,
-            title=request.title,
-            status=status_enum,
-            topic_id=request.topic_id
-        )
-        return updated.to_dict()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    status_enum = _parse_enum(ConversationStatus, request.status, "status") if request.status else None
+
+    updated = conversation_manager.update_conversation(
+        conversation_id=conversation_id,
+        title=request.title,
+        status=status_enum,
+        topic_id=request.topic_id
+    )
+    return updated.to_dict()
 
 
 @router.delete("/conversations/{conversation_id}")
 async def delete_conversation(conversation_id: str):
     """Delete a conversation"""
-    existing = conversation_manager.get_conversation(conversation_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
+    _get_conversation_or_404(conversation_id)
+
     success = conversation_manager.delete_conversation(conversation_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete conversation")
-    
+
     return {"message": "Conversation deleted successfully", "id": conversation_id}
 
 
@@ -227,43 +271,33 @@ async def get_messages(
     offset: int = Query(0, ge=0)
 ):
     """Get messages for a conversation"""
-    conversation = conversation_manager.get_conversation(conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
+    _get_conversation_or_404(conversation_id)
+
     messages = conversation_manager.get_messages(
         conversation_id=conversation_id,
         limit=limit,
         offset=offset
     )
-    
+
     return [msg.to_dict() for msg in messages]
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=Dict[str, Any], status_code=201)
+@_handle_errors
 async def add_message(conversation_id: str, request: MessageCreate):
     """Add a message to a conversation"""
-    conversation = conversation_manager.get_conversation(conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
-    # Validate role
-    try:
-        role = MessageRole(request.role.lower())
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Invalid role: {request.role}")
-    
-    try:
-        message = conversation_manager.add_message(
-            conversation_id=conversation_id,
-            role=role,
-            text=request.content,
-            model=request.model,
-            tokens=request.tokens
-        )
-        return message.to_dict()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    _get_conversation_or_404(conversation_id)
+
+    role = _parse_enum(MessageRole, request.role, "role")
+
+    message = conversation_manager.add_message(
+        conversation_id=conversation_id,
+        role=role,
+        text=request.content,
+        model=request.model,
+        tokens=request.tokens
+    )
+    return message.to_dict()
 
 
 # ==================== Topic Endpoints ====================
@@ -276,65 +310,55 @@ async def list_topics():
 
 
 @router.post("/topics", response_model=Dict[str, Any], status_code=201)
+@_handle_errors
 async def create_topic(request: TopicCreate):
     """Create a new topic"""
-    try:
-        topic = conversation_manager.create_topic(
-            name=request.name,
-            description=request.description,
-            color=request.color,
-            parent_id=request.parent_id
-        )
-        return topic.to_dict()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    topic = conversation_manager.create_topic(
+        name=request.name,
+        description=request.description,
+        color=request.color,
+        parent_id=request.parent_id
+    )
+    return topic.to_dict()
 
 
 @router.get("/topics/{topic_id}", response_model=Dict[str, Any])
 async def get_topic(topic_id: str):
     """Get a specific topic"""
-    topic = conversation_manager.get_topic(topic_id)
-    if not topic:
-        raise HTTPException(status_code=404, detail="Topic not found")
-    return topic.to_dict()
+    return _get_topic_or_404(topic_id).to_dict()
 
 
 @router.put("/topics/{topic_id}", response_model=Dict[str, Any])
+@_handle_errors
 async def update_topic(topic_id: str, request: TopicUpdate):
     """Update a topic"""
-    existing = conversation_manager.get_topic(topic_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Topic not found")
-    
-    try:
-        updated = conversation_manager.update_topic(
-            topic_id=topic_id,
-            name=request.name,
-            description=request.description,
-            color=request.color
-        )
-        return updated.to_dict()
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    _get_topic_or_404(topic_id)
+
+    updated = conversation_manager.update_topic(
+        topic_id=topic_id,
+        name=request.name,
+        description=request.description,
+        color=request.color
+    )
+    return updated.to_dict()
 
 
 @router.delete("/topics/{topic_id}")
 async def delete_topic(topic_id: str):
     """Delete a topic"""
-    existing = conversation_manager.get_topic(topic_id)
-    if not existing:
-        raise HTTPException(status_code=404, detail="Topic not found")
-    
+    _get_topic_or_404(topic_id)
+
     success = conversation_manager.delete_topic(topic_id)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete topic")
-    
+
     return {"message": "Topic deleted successfully", "id": topic_id}
 
 
 # ==================== Search Endpoints ====================
 
 @router.get("/search", response_model=List[Dict[str, Any]])
+@_handle_errors
 async def search(
     q: str = Query(..., min_length=1, description="Search query"),
     user_id: Optional[str] = Query(None, description="Filter by user ID"),
@@ -342,159 +366,232 @@ async def search(
 ):
     """
     Search conversations by title and summary
-    
+
     - **q**: Search query string
     - **user_id**: Optional user ID filter
     - **limit**: Maximum number of results
     """
-    try:
-        conversations = conversation_manager.search_conversations(
-            query=q,
-            user_id=user_id,
-            limit=limit
-        )
-        return [conv.to_dict() for conv in conversations]
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    conversations = conversation_manager.search_conversations(
+        query=q,
+        user_id=user_id,
+        limit=limit
+    )
+    return [conv.to_dict() for conv in conversations]
 
 
 @router.post("/search/messages", response_model=List[Dict[str, Any]])
+@_handle_errors
 async def search_messages(
     query: str = Form(..., min_length=1),
     conversation_id: Optional[str] = Form(None),
-    role: Optional[str] = Form(None)
+    role: Optional[str] = Form(None),
+    limit: int = Form(100, ge=1, le=500)
 ):
     """
     Search messages across all conversations
-    
+
     - **query**: Search text
     - **conversation_id**: Optional conversation filter
     - **role**: Optional role filter (user, assistant, system)
+    - **limit**: Maximum number of results (default 100)
     """
-    # This would require database search implementation
-    # For now, we'll return an empty list with a note
-    raise HTTPException(
-        status_code=501, 
-        detail="Message search requires database implementation. Use GET /search for conversation search."
-    )
+    # Validate role if provided
+    if role:
+        valid_roles = ["user", "assistant", "system"]
+        if role.lower() not in valid_roles:
+            raise HTTPException(status_code=400, detail=f"Invalid role: {role}")
+        role = role.lower()
+
+    # Search through ConversationManager's in-memory messages
+    results = []
+    query_lower = query.lower()
+
+    if conversation_id:
+        # Search within a specific conversation
+        _get_conversation_or_404(conversation_id)
+        conv_ids = [conversation_id]
+    else:
+        # Search across all conversations
+        all_convs = conversation_manager.list_conversations(limit=1000)
+        conv_ids = [c.id for c in all_convs]
+
+    for cid in conv_ids:
+        messages = conversation_manager.get_messages(cid)
+        for msg in messages:
+            if role and msg.role.value != role:
+                continue
+            if query_lower in msg.content.text.lower():
+                results.append({
+                    "conversation_id": cid,
+                    "role": msg.role.value,
+                    "content": msg.content.text,
+                    "created_at": msg.created_at.isoformat() if msg.created_at else None,
+                })
+                if len(results) >= limit:
+                    break
+        if len(results) >= limit:
+            break
+
+    return results
 
 
 # ==================== Export/Import Endpoints ====================
 
 @router.post("/export")
+@_handle_errors
 async def export_conversations(request: ExportRequest):
     """
     Export conversations to JSON
-    
+
     - **conversation_ids**: Specific conversation IDs to export (None = all)
     - **topic_id**: Filter by topic
     - **date_from**: Filter by start date
     - **date_to**: Filter by end date
-    
+
     Returns JSON data for download
     """
-    try:
-        import tempfile
-        from pathlib import Path
-        
-        # Create temp file for export
-        temp_dir = Path(tempfile.gettempdir())
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        export_path = temp_dir / f"conversations_export_{timestamp}.json"
-        
-        # Convert string IDs to int for database layer if needed
-        # Here we use the conversation_manager's file-based storage
-        # So we need to handle the export differently
-        
-        if request.conversation_ids and len(request.conversation_ids) == 1:
-            # Single conversation export
-            data = json_handler.export_conversation(int(request.conversation_ids[0]))
-        else:
-            # Multiple or all conversations
-            # Convert topic_id to int if provided
-            topic_id_int = int(request.topic_id) if request.topic_id else None
-            conv_ids_int = [int(cid) for cid in request.conversation_ids] if request.conversation_ids else None
-            data = json_handler.export_conversations(
-                conversation_ids=conv_ids_int,
-                topic_id=topic_id_int,
-                date_from=request.date_from,
-                date_to=request.date_to
-            )
-        
-        return {
-            "export_data": data,
-            "filename": export_path.name,
-            "exported_at": datetime.now().isoformat()
+    # Export using ConversationManager (string UUID IDs)
+    conversations_to_export = []
+
+    if request.conversation_ids:
+        for cid in request.conversation_ids:
+            conv = conversation_manager.get_conversation(cid)
+            if conv:
+                conversations_to_export.append(conv)
+    else:
+        conversations_to_export = conversation_manager.list_conversations(
+            topic_id=request.topic_id,
+            limit=1000
+        )
+
+    # Apply date filters
+    if request.date_from or request.date_to:
+        filtered = []
+        for conv in conversations_to_export:
+            if request.date_from and conv.created_at < request.date_from:
+                continue
+            if request.date_to and conv.created_at > request.date_to:
+                continue
+            filtered.append(conv)
+        conversations_to_export = filtered
+
+    # Build export data
+    export_data = []
+    for conv in conversations_to_export:
+        messages = conversation_manager.get_messages(conv.id)
+        export_data.append(_serialize_conversation_export(conv, messages))
+
+    data = {
+        "version": "1.0",
+        "export_date": datetime.now().isoformat(),
+        "conversations": export_data,
+        "metadata": {
+            "total_conversations": len(export_data),
+            "total_messages": sum(len(c["messages"]) for c in export_data),
         }
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid ID format: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    }
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return {
+        "export_data": data,
+        "filename": f"conversations_export_{timestamp}.json",
+        "exported_at": datetime.now().isoformat()
+    }
 
 
 @router.post("/import", response_model=ImportResponse)
+@_handle_errors
 async def import_conversations(
     file: UploadFile = File(..., description="JSON file to import"),
     target_topic_id: Optional[str] = Form(None)
 ):
     """
     Import conversations from JSON file
-    
+
     - **file**: JSON file containing conversation data
     - **target_topic_id**: Optional topic ID to assign to imported conversations
     """
+    # Read uploaded file with size limit (10MB max)
+    MAX_UPLOAD_SIZE = 10 * 1024 * 1024
+    content = await file.read(MAX_UPLOAD_SIZE + 1)
+    if len(content) > MAX_UPLOAD_SIZE:
+        raise HTTPException(status_code=413, detail="File too large (max 10MB)")
+
     try:
-        import json
-        import tempfile
-        
-        # Read uploaded file
-        content = await file.read()
         data = json.loads(content.decode('utf-8'))
-        
-        # Convert topic_id to int if provided
-        topic_id_int = int(target_topic_id) if target_topic_id else None
-        
-        # Import conversations
-        imported_ids = json_handler.import_conversations(data, topic_id_int)
-        
-        return ImportResponse(
-            imported_count=len(imported_ids),
-            conversation_ids=[str(cid) for cid in imported_ids]
-        )
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, UnicodeDecodeError):
         raise HTTPException(status_code=400, detail="Invalid JSON file")
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=f"Invalid data: {str(e)}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+
+    # Import conversations using ConversationManager
+    imported_ids = []
+
+    # Handle both single and multiple conversation formats
+    if "conversation" in data:
+        conv_list = [data["conversation"]]
+    elif "conversations" in data:
+        conv_list = data["conversations"]
+    else:
+        raise HTTPException(status_code=400, detail="Invalid format: missing 'conversations' or 'conversation'")
+
+    for conv_data in conv_list:
+        title = conv_data.get("title", "Imported Conversation")
+        first_msg = None
+        messages_data = conv_data.get("messages", [])
+        if messages_data:
+            first_msg = messages_data[0].get("content")
+
+        conv = conversation_manager.create_conversation(
+            first_message=first_msg,
+            topic_id=target_topic_id
+        )
+        if title:
+            conversation_manager.update_conversation(conv.id, title=title)
+
+        # Add remaining messages (skip first if used as first_message)
+        for msg in messages_data[1:] if first_msg else messages_data:
+            try:
+                role = MessageRole(msg.get("role", "user"))
+            except ValueError:
+                role = MessageRole.USER
+            conversation_manager.add_message(
+                conversation_id=conv.id,
+                role=role,
+                text=msg.get("content", "")
+            )
+        imported_ids.append(conv.id)
+
+    return ImportResponse(
+        imported_count=len(imported_ids),
+        conversation_ids=imported_ids
+    )
 
 
 @router.get("/export/{conversation_id}")
+@_handle_errors
 async def export_single_conversation(conversation_id: str):
     """Export a single conversation"""
-    try:
-        conv_id_int = int(conversation_id)
-        data = json_handler.export_conversation(conv_id_int)
-        return {
-            "export_data": data,
-            "exported_at": datetime.now().isoformat()
-        }
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid conversation ID")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    conv = _get_conversation_or_404(conversation_id)
+    messages = conversation_manager.get_messages(conversation_id)
+
+    data = {
+        "version": "1.0",
+        "export_date": datetime.now().isoformat(),
+        "conversation": _serialize_conversation_export(conv, messages)
+    }
+    return {
+        "export_data": data,
+        "exported_at": datetime.now().isoformat()
+    }
 
 
 # ==================== Statistics Endpoints ====================
 
 @router.get("/stats")
+@_handle_errors
 async def get_stats(user_id: Optional[str] = Query(None)):
     """Get conversation statistics"""
-    try:
-        stats = conversation_manager.get_stats(user_id=user_id)
-        return stats
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    stats = conversation_manager.get_stats(user_id=user_id)
+    return stats
 
 
 @router.get("/conversations/{conversation_id}/history")
@@ -503,15 +600,13 @@ async def get_message_history(
     max_messages: int = Query(20, ge=1, le=100)
 ):
     """Get message history formatted for LLM context"""
-    conversation = conversation_manager.get_conversation(conversation_id)
-    if not conversation:
-        raise HTTPException(status_code=404, detail="Conversation not found")
-    
+    _get_conversation_or_404(conversation_id)
+
     history = conversation_manager.get_message_history(
         conversation_id=conversation_id,
         max_messages=max_messages
     )
-    
+
     return {
         "conversation_id": conversation_id,
         "message_count": len(history),

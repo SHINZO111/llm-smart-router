@@ -300,6 +300,29 @@ connection_pool:
   # SSL設定
   ssl_verification: true
 
+# Auto-Launch Chain 設定
+launcher:
+  # LM Studio 自動起動
+  lmstudio:
+    enabled: true
+    timeout: 60.0       # API応答待ちタイムアウト（秒）
+    retry: 2            # リトライ回数
+    model_detect: true  # モデル自動検出
+    model_detect_timeout: 30.0
+    # path: null        # LM Studio実行ファイルパス（自動検出）
+    # endpoint: "http://localhost:1234/v1"  # 環境変数 LM_STUDIO_ENDPOINT で上書き可
+
+  # OpenClaw 統合
+  openclaw:
+    enabled: true
+    timeout: 15.0
+
+  # Discord Bot
+  discord:
+    enabled: false      # デフォルト無効（DISCORD_BOT_TOKEN 設定後に有効化）
+    timeout: 15.0
+    # bot_path: null    # カスタムパス（デフォルト: discord-bot.js）
+
 # ログ
 logging:
   enabled: true

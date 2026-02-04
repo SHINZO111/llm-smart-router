@@ -5,12 +5,14 @@
 """
 import json
 import os
+import re
+import sys
+import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Callable
 from pathlib import Path
 
-import sys
-from pathlib import Path
+logger = logging.getLogger(__name__)
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
@@ -68,14 +70,35 @@ class ConversationManager:
     def on_message_added(self, callback: Callable[[Message], None]):
         """メッセージ追加時のコールバックを登録"""
         self._on_message_added.append(callback)
-    
+
+    def remove_conversation_callback(self, callback: Callable[[Conversation], None]) -> bool:
+        """会話変更コールバックを解除"""
+        try:
+            self._on_conversation_changed.remove(callback)
+            return True
+        except ValueError:
+            return False
+
+    def remove_message_callback(self, callback: Callable[[Message], None]) -> bool:
+        """メッセージ追加コールバックを解除"""
+        try:
+            self._on_message_added.remove(callback)
+            return True
+        except ValueError:
+            return False
+
+    def clear_all_callbacks(self) -> None:
+        """すべてのコールバックをクリア"""
+        self._on_conversation_changed.clear()
+        self._on_message_added.clear()
+
     def _notify_conversation_changed(self, conversation: Conversation):
         """会話変更を通知"""
         for callback in self._on_conversation_changed:
             try:
                 callback(conversation)
             except Exception as e:
-                print(f"Callback error: {e}")
+                logger.error(f"Conversation callback error: {e}", exc_info=True)
     
     def _notify_message_added(self, message: Message):
         """メッセージ追加を通知"""
@@ -83,16 +106,26 @@ class ConversationManager:
             try:
                 callback(message)
             except Exception as e:
-                print(f"Callback error: {e}")
+                logger.error(f"Message callback error: {e}", exc_info=True)
     
     # ========== データ永続化 ==========
-    
+
+    _SAFE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+    def _validate_id(self, conversation_id: str) -> str:
+        """IDのバリデーション（パストラバーサル防止）"""
+        if not conversation_id or not self._SAFE_ID_PATTERN.match(conversation_id):
+            raise ValueError(f"Invalid conversation ID: {conversation_id!r}")
+        return conversation_id
+
     def _get_conversation_file(self, conversation_id: str) -> Path:
         """会話ファイルのパスを取得"""
+        self._validate_id(conversation_id)
         return self.storage_path / f"{conversation_id}.json"
-    
+
     def _get_messages_file(self, conversation_id: str) -> Path:
         """メッセージファイルのパスを取得"""
+        self._validate_id(conversation_id)
         return self.storage_path / f"{conversation_id}_messages.json"
     
     def _get_topics_file(self) -> Path:
@@ -133,7 +166,7 @@ class ConversationManager:
                         topic = Topic.from_dict(data)
                         self._topics[topic.id] = topic
             except Exception as e:
-                print(f"Failed to load topics: {e}")
+                logger.warning(f"Failed to load topics: {e}")
         
         # 会話をロード
         for file_path in self.storage_path.glob("*.json"):
@@ -156,7 +189,7 @@ class ConversationManager:
                     else:
                         self._messages[conversation.id] = []
             except Exception as e:
-                print(f"Failed to load conversation {file_path}: {e}")
+                logger.warning(f"Failed to load conversation {file_path}: {e}")
     
     # ========== 新規セッション開始 ==========
     
@@ -485,7 +518,14 @@ class ConversationManager:
         return True
     
     # ========== 会話一覧取得 ==========
-    
+
+    _SORT_KEYS = {
+        "created_at": lambda c: c.created_at,
+        "updated_at": lambda c: c.updated_at,
+        "title": lambda c: c.title.lower(),
+        "message_count": lambda c: c.message_count,
+    }
+
     def list_conversations(self,
                           user_id: Optional[str] = None,
                           topic_id: Optional[str] = None,
@@ -499,7 +539,7 @@ class ConversationManager:
                           offset: int = 0) -> List[Conversation]:
         """
         会話一覧を取得（フィルタ・ソート対応）
-        
+
         Args:
             user_id: ユーザーIDでフィルタ
             topic_id: トピックIDでフィルタ
@@ -511,54 +551,44 @@ class ConversationManager:
             ascending: 昇順ソート
             limit: 取得件数上限
             offset: スキップ件数
-            
+
         Returns:
             フィルタ済みConversationインスタンスのリスト
         """
         conversations = list(self._conversations.values())
-        
+
         # フィルタリング
         if user_id:
             conversations = [c for c in conversations if c.user_id == user_id]
-        
+
         if topic_id is not None:  # Noneでない場合のみフィルタ（Noneは「トピックなし」として扱う）
             conversations = [c for c in conversations if c.topic_id == topic_id]
-        
+
         if status:
             conversations = [c for c in conversations if c.status == status]
-        
+
         if search_query:
             query = search_query.lower()
             conversations = [
-                c for c in conversations 
+                c for c in conversations
                 if query in c.title.lower() or (c.summary and query in c.summary.lower())
             ]
-        
+
         if date_from:
             conversations = [c for c in conversations if c.created_at >= date_from]
-        
+
         if date_to:
             conversations = [c for c in conversations if c.created_at <= date_to]
-        
+
         # ソート
-        reverse = not ascending
-        if sort_by == "created_at":
-            conversations.sort(key=lambda c: c.created_at, reverse=reverse)
-        elif sort_by == "updated_at":
-            conversations.sort(key=lambda c: c.updated_at, reverse=reverse)
-        elif sort_by == "title":
-            conversations.sort(key=lambda c: c.title.lower(), reverse=reverse)
-        elif sort_by == "message_count":
-            conversations.sort(key=lambda c: c.message_count, reverse=reverse)
-        else:
-            conversations.sort(key=lambda c: c.updated_at, reverse=reverse)
-        
+        sort_func = self._SORT_KEYS.get(sort_by, self._SORT_KEYS["updated_at"])
+        conversations.sort(key=sort_func, reverse=not ascending)
+
         # ページネーション
-        total = len(conversations)
         conversations = conversations[offset:]
         if limit:
             conversations = conversations[:limit]
-        
+
         return conversations
     
     def get_recent_conversations(self, 
@@ -691,7 +721,7 @@ class ConversationManager:
             if msg_file.exists():
                 msg_file.unlink()
         except Exception as e:
-            print(f"Failed to delete files: {e}")
+            logger.error(f"Failed to delete conversation files: {e}")
             return False
         
         # キャッシュから削除

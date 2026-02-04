@@ -2,15 +2,20 @@
 SQLiteベースキャッシュモジュール
 - TTL設定（デフォルト1時間）
 - 類似質問検索（ベクトル類似度）
+- スレッドセーフ操作
 """
 import sqlite3
 import json
 import hashlib
 import time
+import threading
+import logging
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Callable
 from dataclasses import dataclass
 import re
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -28,8 +33,8 @@ class CacheEntry:
 
 
 class SQLiteCache:
-    """SQLiteベースのキャッシュ管理クラス"""
-    
+    """SQLiteベースのキャッシュ管理クラス（スレッドセーフ）"""
+
     def __init__(
         self,
         db_path: str = "./cache/llm_cache.db",
@@ -42,42 +47,45 @@ class SQLiteCache:
         self.max_entries = max_entries
         self.similarity_threshold = similarity_threshold
         self._initialized = False
+        self._lock = threading.RLock()  # スレッドセーフのためのリエントラントロック
         
     def initialize(self) -> None:
         """データベース初期化"""
-        if self._initialized:
-            return
-            
-        import os
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
-        
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS cache_entries (
-                    key TEXT PRIMARY KEY,
-                    query TEXT NOT NULL,
-                    response TEXT NOT NULL,
-                    model TEXT NOT NULL,
-                    metadata TEXT,
-                    created_at REAL NOT NULL,
-                    expires_at REAL NOT NULL,
-                    access_count INTEGER DEFAULT 0,
-                    last_accessed REAL DEFAULT 0
-                )
-            """)
-            
-            # 類似検索用インデックス
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_query ON cache_entries(query)
-            """)
-            
-            conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_expires ON cache_entries(expires_at)
-            """)
-            
-            conn.commit()
-        
-        self._initialized = True
+        with self._lock:
+            if self._initialized:
+                return
+
+            import os
+            os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS cache_entries (
+                        key TEXT PRIMARY KEY,
+                        query TEXT NOT NULL,
+                        response TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        metadata TEXT,
+                        created_at REAL NOT NULL,
+                        expires_at REAL NOT NULL,
+                        access_count INTEGER DEFAULT 0,
+                        last_accessed REAL DEFAULT 0
+                    )
+                """)
+
+                # 類似検索用インデックス
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_query ON cache_entries(query)
+                """)
+
+                conn.execute("""
+                    CREATE INDEX IF NOT EXISTS idx_expires ON cache_entries(expires_at)
+                """)
+
+                conn.commit()
+
+            self._initialized = True
+            logger.info(f"SQLiteCache initialized: {self.db_path}")
     
     def _generate_key(self, query: str, model: str, params: Optional[Dict] = None) -> str:
         """クエリからキーを生成"""
@@ -125,6 +133,29 @@ class SQLiteCache:
         
         return jaccard * (0.7 + 0.3 * len_ratio)
     
+    def _row_to_entry(self, row) -> CacheEntry:
+        """DBの行タプルからCacheEntryを生成"""
+        return CacheEntry(
+            key=row[0],
+            query=row[1],
+            response=row[2],
+            model=row[3],
+            metadata=json.loads(row[4] or '{}'),
+            created_at=row[5],
+            expires_at=row[6],
+            access_count=row[7] + 1,
+            last_accessed=time.time()
+        )
+
+    @staticmethod
+    def _update_access(conn, key: str):
+        """アクセス統計を更新"""
+        conn.execute(
+            "UPDATE cache_entries SET access_count = access_count + 1, last_accessed = ? WHERE key = ?",
+            (time.time(), key)
+        )
+        conn.commit()
+
     def get(
         self,
         query: str,
@@ -134,65 +165,45 @@ class SQLiteCache:
     ) -> Optional[CacheEntry]:
         """
         キャッシュから取得
-        
+
         Args:
             query: 検索クエリ
             model: モデル名
             params: 追加パラメータ
             use_similarity: 類似検索を使用するか
-        
+
         Returns:
             CacheEntry or None
         """
         if not self._initialized:
             self.initialize()
-        
+
         key = self._generate_key(query, model, params)
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
             # 完全一致で検索
             cursor = conn.execute(
                 """
-                SELECT key, query, response, model, metadata, created_at, 
+                SELECT key, query, response, model, metadata, created_at,
                        expires_at, access_count, last_accessed
                 FROM cache_entries
                 WHERE key = ? AND expires_at > ?
                 """,
                 (key, time.time())
             )
-            
+
             row = cursor.fetchone()
-            
+
             if row:
-                # アクセス統計更新
-                conn.execute(
-                    """
-                    UPDATE cache_entries 
-                    SET access_count = access_count + 1, last_accessed = ?
-                    WHERE key = ?
-                    """,
-                    (time.time(), key)
-                )
-                conn.commit()
-                
-                return CacheEntry(
-                    key=row[0],
-                    query=row[1],
-                    response=row[2],
-                    model=row[3],
-                    metadata=json.loads(row[4] or '{}'),
-                    created_at=row[5],
-                    expires_at=row[6],
-                    access_count=row[7] + 1,
-                    last_accessed=time.time()
-                )
-            
+                self._update_access(conn, key)
+                return self._row_to_entry(row)
+
             # 類似検索
             if use_similarity:
                 return self._find_similar(conn, query, model, params)
-        
+
         return None
-    
+
     def _find_similar(
         self,
         conn: sqlite3.Connection,
@@ -201,11 +212,11 @@ class SQLiteCache:
         params: Optional[Dict] = None
     ) -> Optional[CacheEntry]:
         """類似エントリを検索"""
-        
+
         # 有効なエントリを取得（最近のもの優先）
         cursor = conn.execute(
             """
-            SELECT key, query, response, model, metadata, created_at, 
+            SELECT key, query, response, model, metadata, created_at,
                    expires_at, access_count, last_accessed
             FROM cache_entries
             WHERE model = ? AND expires_at > ?
@@ -214,42 +225,22 @@ class SQLiteCache:
             """,
             (model, time.time())
         )
-        
+
         best_match = None
         best_score = 0.0
-        
+
         for row in cursor:
             cached_query = row[1]
             similarity = self._calculate_similarity(query, cached_query)
-            
+
             if similarity > self.similarity_threshold and similarity > best_score:
                 best_score = similarity
                 best_match = row
-        
+
         if best_match:
-            # アクセス統計更新
-            conn.execute(
-                """
-                UPDATE cache_entries 
-                SET access_count = access_count + 1, last_accessed = ?
-                WHERE key = ?
-                """,
-                (time.time(), best_match[0])
-            )
-            conn.commit()
-            
-            return CacheEntry(
-                key=best_match[0],
-                query=best_match[1],
-                response=best_match[2],
-                model=best_match[3],
-                metadata=json.loads(best_match[4] or '{}'),
-                created_at=best_match[5],
-                expires_at=best_match[6],
-                access_count=best_match[7] + 1,
-                last_accessed=time.time()
-            )
-        
+            self._update_access(conn, best_match[0])
+            return self._row_to_entry(best_match)
+
         return None
     
     def set(
@@ -281,8 +272,8 @@ class SQLiteCache:
         key = self._generate_key(query, model, params)
         now = time.time()
         expires = now + (ttl or self.default_ttl)
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
             conn.execute(
                 """
                 INSERT OR REPLACE INTO cache_entries
@@ -311,8 +302,8 @@ class SQLiteCache:
         """キャッシュエントリを削除"""
         if not self._initialized:
             return False
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("DELETE FROM cache_entries WHERE key = ?", (key,))
             conn.commit()
             return cursor.rowcount > 0
@@ -321,15 +312,15 @@ class SQLiteCache:
         """全キャッシュをクリア"""
         if not self._initialized:
             return 0
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute("DELETE FROM cache_entries")
             conn.commit()
             return cursor.rowcount
     
     def _cleanup_old_entries(self) -> None:
         """古いエントリをクリーンアップ"""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._lock, sqlite3.connect(self.db_path) as conn:
             # 期限切れエントリを削除
             conn.execute(
                 "DELETE FROM cache_entries WHERE expires_at <= ?",
@@ -352,8 +343,8 @@ class SQLiteCache:
         """キャッシュ統計を取得"""
         if not self._initialized:
             return {"initialized": False}
-        
-        with sqlite3.connect(self.db_path) as conn:
+
+        with self._lock, sqlite3.connect(self.db_path) as conn:
             # 総エントリ数
             total = conn.execute(
                 "SELECT COUNT(*) FROM cache_entries"
@@ -397,11 +388,11 @@ class SQLiteCache:
 
 class CacheDecorator:
     """関数の結果をキャッシュするデコレータ"""
-    
+
     def __init__(
         self,
         cache: SQLiteCache,
-        key_func: Optional[callable] = None,
+        key_func: Optional[Callable[..., str]] = None,
         ttl: Optional[int] = None
     ):
         self.cache = cache
