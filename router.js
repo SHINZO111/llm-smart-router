@@ -25,43 +25,59 @@ class ConversationHistoryManager {
   }
 
   /**
-   * Initialize a new conversation or get existing one
+   * Pythonサブプロセスをstdin経由でJSON実行（インジェクション防止）
    */
-  async initConversation(title = 'New Conversation', topicId = null) {
+  _runPython(script) {
     return new Promise((resolve, reject) => {
       const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-      const args = [
-        '-c',
-        `
-import sys
-sys.path.insert(0, 'src/conversation')
-from db_manager import get_db
-import json
-
-db = get_db('${this.dbPath}')
-conv_id = db.create_conversation('${title}', ${topicId || 'None'})
-print(conv_id)
-        `.trim()
-      ];
-      
-      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
+      const proc = spawn(pythonCmd, ['-c', script], { cwd: process.cwd() });
       let output = '';
       let error = '';
-      
+
       proc.stdout.on('data', (data) => { output += data.toString(); });
       proc.stderr.on('data', (data) => { error += data.toString(); });
-      
+
+      proc.on('error', (err) => {
+        reject(new Error(`Python process spawn failed: ${err.message}`));
+      });
+
       proc.on('close', (code) => {
         if (code !== 0) {
-          console.warn('⚠️  DB initialization failed:', error);
-          resolve(null);
+          reject(new Error(error || `Python exited with code ${code}`));
         } else {
-          this.currentConversationId = parseInt(output.trim());
-          console.log(`📝 Conversation initialized: #${this.currentConversationId}`);
-          resolve(this.currentConversationId);
+          resolve(output.trim());
         }
       });
     });
+  }
+
+  /**
+   * Initialize a new conversation or get existing one
+   */
+  async initConversation(title = 'New Conversation', topicId = null) {
+    const safeTitle = JSON.stringify(title);
+    const safeTopic = topicId != null ? String(Number(topicId)) : 'None';
+    const safeDbPath = JSON.stringify(this.dbPath);
+
+    const script = `
+import sys, json
+sys.path.insert(0, 'src/conversation')
+from db_manager import get_db
+
+db = get_db(${safeDbPath})
+conv_id = db.create_conversation(${safeTitle}, ${safeTopic})
+print(conv_id)
+    `.trim();
+
+    try {
+      const output = await this._runPython(script);
+      this.currentConversationId = parseInt(output);
+      console.log(`📝 Conversation initialized: #${this.currentConversationId}`);
+      return this.currentConversationId;
+    } catch (error) {
+      console.warn('⚠️  DB initialization failed:', error.message);
+      return null;
+    }
   }
 
   /**
@@ -71,46 +87,40 @@ print(conv_id)
     if (!this.currentConversationId) {
       await this.initConversation();
     }
-    
-    return new Promise((resolve, reject) => {
-      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-      const escapedContent = content.replace(/'/g, "\\'").replace(/\n/g, '\\n');
-      
-      const args = [
-        '-c',
-        `
-import sys
+
+    // パラメータをJSON経由でPythonに安全に渡す
+    const params = JSON.stringify({
+      db_path: this.dbPath,
+      conversation_id: this.currentConversationId,
+      role: role,
+      content: content,
+      model: model,
+    });
+
+    const script = `
+import sys, json
 sys.path.insert(0, 'src/conversation')
 from db_manager import get_db
 
-db = get_db('${this.dbPath}')
+params = json.loads(${JSON.stringify(params)})
+db = get_db(params['db_path'])
 msg_id = db.add_message(
-    conversation_id=${this.currentConversationId},
-    role='${role}',
-    content='''${escapedContent}''',
-    model=${model ? `'${model}'` : 'None'}
+    conversation_id=params['conversation_id'],
+    role=params['role'],
+    content=params['content'],
+    model=params.get('model')
 )
 print(msg_id)
-        `.trim()
-      ];
-      
-      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
-      let output = '';
-      let error = '';
-      
-      proc.stdout.on('data', (data) => { output += data.toString(); });
-      proc.stderr.on('data', (data) => { error += data.toString(); });
-      
-      proc.on('close', (code) => {
-        if (code !== 0) {
-          console.warn('⚠️  Failed to save message:', error);
-          resolve(null);
-        } else {
-          console.log(`💾 Message saved: ${role} (${output.trim()})`);
-          resolve(parseInt(output.trim()));
-        }
-      });
-    });
+    `.trim();
+
+    try {
+      const output = await this._runPython(script);
+      console.log(`💾 Message saved: ${role} (${output})`);
+      return parseInt(output);
+    } catch (error) {
+      console.warn('⚠️  Failed to save message:', error.message);
+      return null;
+    }
   }
 
   /**
@@ -120,10 +130,10 @@ print(msg_id)
     try {
       // Save user message
       await this.saveMessage('user', userInput, null);
-      
+
       // Save assistant message
       await this.saveMessage('assistant', assistantResponse, modelUsed);
-      
+
       console.log('💾 Conversation auto-saved');
       return true;
     } catch (error) {
@@ -137,28 +147,31 @@ print(msg_id)
    */
   async updateTitle(title) {
     if (!this.currentConversationId) return;
-    
-    return new Promise((resolve, reject) => {
-      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-      
-      const args = [
-        '-c',
-        `
-import sys
+
+    const params = JSON.stringify({
+      db_path: this.dbPath,
+      conversation_id: this.currentConversationId,
+      title: title,
+    });
+
+    const script = `
+import sys, json
 sys.path.insert(0, 'src/conversation')
 from db_manager import get_db
 
-db = get_db('${this.dbPath}')
-db.update_conversation(${this.currentConversationId}, title='${title}')
+params = json.loads(${JSON.stringify(params)})
+db = get_db(params['db_path'])
+db.update_conversation(params['conversation_id'], title=params['title'])
 print('OK')
-        `.trim()
-      ];
-      
-      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
-      proc.on('close', (code) => {
-        resolve(code === 0);
-      });
-    });
+    `.trim();
+
+    try {
+      await this._runPython(script);
+      return true;
+    } catch (error) {
+      console.warn('⚠️  Failed to update title:', error.message);
+      return false;
+    }
   }
 
   /**
@@ -166,40 +179,28 @@ print('OK')
    */
   async getHistory(limit = 50) {
     if (!this.currentConversationId) return [];
-    
-    return new Promise((resolve, reject) => {
-      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-      
-      const args = [
-        '-c',
-        `
-import sys
-import json
+
+    const safeDbPath = JSON.stringify(this.dbPath);
+    const safeConvId = Number(this.currentConversationId);
+    const safeLimit = Number(limit);
+
+    const script = `
+import sys, json
 sys.path.insert(0, 'src/conversation')
 from db_manager import get_db
 
-db = get_db('${this.dbPath}')
-messages = db.get_messages(${this.currentConversationId}, limit=${limit})
+db = get_db(${safeDbPath})
+messages = db.get_messages(${safeConvId}, limit=${safeLimit})
 print(json.dumps(messages))
-        `.trim()
-      ];
-      
-      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
-      let output = '';
-      
-      proc.stdout.on('data', (data) => { output += data.toString(); });
-      proc.on('close', (code) => {
-        if (code === 0) {
-          try {
-            resolve(JSON.parse(output.trim()));
-          } catch (e) {
-            resolve([]);
-          }
-        } else {
-          resolve([]);
-        }
-      });
-    });
+    `.trim();
+
+    try {
+      const output = await this._runPython(script);
+      return JSON.parse(output);
+    } catch (error) {
+      console.warn('⚠️  Failed to get history:', error.message);
+      return [];
+    }
   }
 
   /**
@@ -207,37 +208,39 @@ print(json.dumps(messages))
    */
   async exportToJson(filepath) {
     if (!this.currentConversationId) return null;
-    
-    return new Promise((resolve, reject) => {
-      const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-      
-      const args = [
-        '-c',
-        `
-import sys
+
+    const params = JSON.stringify({
+      filepath: filepath,
+      conversation_ids: [this.currentConversationId],
+    });
+
+    const script = `
+import sys, json
 sys.path.insert(0, 'src/conversation')
 from json_handler import ConversationJSONHandler
 
+params = json.loads(${JSON.stringify(params)})
 handler = ConversationJSONHandler()
-filepath = handler.export_to_file('${filepath}', conversation_ids=[${this.currentConversationId}])
-print(filepath)
-        `.trim()
-      ];
-      
-      const proc = spawn(pythonCmd, args, { cwd: process.cwd() });
-      let output = '';
-      
-      proc.stdout.on('data', (data) => { output += data.toString(); });
-      proc.on('close', (code) => {
-        resolve(code === 0 ? output.trim() : null);
-      });
-    });
+result = handler.export_to_file(params['filepath'], conversation_ids=params['conversation_ids'])
+print(result)
+    `.trim();
+
+    try {
+      return await this._runPython(script);
+    } catch (error) {
+      console.warn('⚠️  Failed to export:', error.message);
+      return null;
+    }
   }
 }
 
 class LLMRouter {
   constructor(configPath = './config.yaml') {
-    this.config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+    try {
+      this.config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+    } catch (error) {
+      throw new Error(`設定ファイル読み込み失敗 (${configPath}): ${error.message}`);
+    }
     this.anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY
     });
@@ -571,7 +574,7 @@ class LLMRouter {
     
     return {
       model: `gpt-vision-${model}`,
-      response: result.choices[0].message.content,
+      response: result.choices?.[0]?.message?.content || '',
       metadata: {
         elapsed,
         tokens,
@@ -661,12 +664,20 @@ class LLMRouter {
         { timeout: 10000 }
       );
       
-      const content = response.data.choices[0].message.content;
-      
+      const choices = response.data.choices;
+      if (!choices || !choices[0]) {
+        throw new Error('Local LLM returned empty response');
+      }
+      const content = choices[0].message.content;
+
       // JSON抽出
       const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
+        try {
+          return JSON.parse(jsonMatch[0]);
+        } catch (parseError) {
+          console.warn('⚠️  JSON解析失敗、テキスト解析に切り替え');
+        }
       }
       
       // JSONが取れなかった場合はパース試行
@@ -758,8 +769,12 @@ class LLMRouter {
       { timeout: config.timeout }
     );
     
-    const choice = response.data.choices[0];
-    
+    const choices = response.data.choices;
+    if (!choices || !choices[0]) {
+      throw new Error('Local LLM returned empty choices');
+    }
+    const choice = choices[0];
+
     return {
       content: choice.message.content,
       tokens: {
@@ -774,14 +789,18 @@ class LLMRouter {
    */
   async executeClaude(input) {
     const config = this.config.models.cloud;
-    
+
     const message = await this.anthropic.messages.create({
       model: config.model,
       max_tokens: config.max_tokens,
       temperature: config.temperature,
       messages: [{ role: 'user', content: input }]
     });
-    
+
+    if (!message.content || !message.content[0]) {
+      throw new Error('Claude returned empty content');
+    }
+
     return {
       content: message.content[0].text,
       tokens: {

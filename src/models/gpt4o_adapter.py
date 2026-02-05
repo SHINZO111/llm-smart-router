@@ -4,6 +4,7 @@ OpenAI API経由で利用
 """
 
 import os
+import asyncio
 import aiohttp
 from typing import Optional, List, Dict, Any, AsyncGenerator
 
@@ -41,7 +42,8 @@ class GPT4oAdapter(BaseModelAdapter):
             config = self._create_default_config()
         super().__init__(config)
         self.session: Optional[aiohttp.ClientSession] = None
-    
+        self._session_lock = asyncio.Lock()
+
     def _create_default_config(self) -> ModelConfig:
         """デフォルト設定を作成"""
         api_key = os.getenv("OPENAI_API_KEY")
@@ -54,7 +56,7 @@ class GPT4oAdapter(BaseModelAdapter):
             max_tokens=4096,
             temperature=0.7
         )
-    
+
     def validate_config(self) -> bool:
         """設定を検証"""
         if not self.config.api_key:
@@ -62,17 +64,18 @@ class GPT4oAdapter(BaseModelAdapter):
                 "OpenAI APIキーが必要です。OPENAI_API_KEY を設定してください。"
             )
         return True
-    
+
     async def _get_session(self) -> aiohttp.ClientSession:
-        """HTTPセッションを取得（遅延初期化）"""
-        if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json"
-                }
-            )
-        return self.session
+        """HTTPセッションを取得（遅延初期化、スレッドセーフ）"""
+        async with self._session_lock:
+            if self.session is None or self.session.closed:
+                self.session = aiohttp.ClientSession(
+                    headers={
+                        "Authorization": f"Bearer {self.config.api_key}",
+                        "Content-Type": "application/json"
+                    }
+                )
+            return self.session
     
     async def generate(
         self,

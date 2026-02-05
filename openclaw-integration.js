@@ -114,22 +114,31 @@ if (process.argv[1] && path.resolve(__filename_check) === path.resolve(process.a
     case 'local':
       integration.invoke({ input, forceModel: 'local' }).then(r => {
         console.log(r.response);
+      }).catch(err => {
+        console.error('エラー:', err.message);
+        process.exit(1);
       });
       break;
-    
+
     case 'claude':
       integration.invoke({ input, forceModel: 'cloud' }).then(r => {
         console.log(r.response);
+      }).catch(err => {
+        console.error('エラー:', err.message);
+        process.exit(1);
       });
       break;
-    
+
     case 'stats':
       console.log(integration.getStats());
       break;
-    
+
     default:
       integration.invoke({ input: process.argv.slice(2).join(' ') }).then(r => {
         console.log(r.response);
+      }).catch(err => {
+        console.error('エラー:', err.message);
+        process.exit(1);
       });
   }
 }

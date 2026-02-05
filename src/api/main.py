@@ -5,6 +5,7 @@ LLM Smart Router - Conversation History API Server
 """
 import os
 import sys
+import logging
 from pathlib import Path
 
 # Add project root to path
@@ -18,15 +19,17 @@ from contextlib import asynccontextmanager
 
 from api.routes import router
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler"""
     # Startup
-    print("🚀 LLM Smart Router API Server starting...")
+    logger.info("LLM Smart Router API Server starting...")
     yield
     # Shutdown
-    print("👋 LLM Smart Router API Server shutting down...")
+    logger.info("LLM Smart Router API Server shutting down...")
 
 
 # Create FastAPI application
@@ -50,6 +53,8 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
+    max_age=600,
 )
 
 # Include routers

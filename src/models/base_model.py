@@ -7,6 +7,14 @@ from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
 
+import sys
+from pathlib import Path
+_project_root = Path(__file__).parent.parent
+if str(_project_root) not in sys.path:
+    sys.path.insert(0, str(_project_root))
+
+from exceptions import LLMRouterError
+
 
 @dataclass
 class ModelResponse:
@@ -174,21 +182,31 @@ class BaseModelAdapter(ABC):
         return int(estimated) + 1  # +1 for safety margin
 
 
-class ModelAdapterError(Exception):
+class ModelAdapterError(LLMRouterError):
     """モデルアダプター関連のエラー"""
-    pass
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, error_code="MODEL_ADAPTER_ERROR", retryable=True, **kwargs)
 
 
 class ModelAuthenticationError(ModelAdapterError):
     """認証エラー"""
-    pass
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, **kwargs)
+        self.error_code = "MODEL_AUTH_ERROR"
+        self.retryable = False
 
 
 class ModelRateLimitError(ModelAdapterError):
     """レート制限エラー"""
-    pass
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, **kwargs)
+        self.error_code = "MODEL_RATE_LIMIT"
+        self.retryable = True
 
 
 class ModelContextLengthError(ModelAdapterError):
     """コンテキスト長超過エラー"""
-    pass
+    def __init__(self, message: str, **kwargs):
+        super().__init__(message, **kwargs)
+        self.error_code = "MODEL_CONTEXT_LENGTH"
+        self.retryable = False

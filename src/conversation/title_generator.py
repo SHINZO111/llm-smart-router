@@ -4,8 +4,11 @@
 最初のユーザー入力から会話タイトルを自動生成
 """
 import re
+import logging
 from typing import Optional, List
 from enum import Enum
+
+logger = logging.getLogger(__name__)
 
 
 class TitleGenerationMethod(Enum):
@@ -83,10 +86,10 @@ class TitleGenerator:
                 genai.configure(api_key=self.api_key)
                 self._gemini_client = genai.GenerativeModel('gemini-pro')
             except ImportError:
-                print("Warning: google-generativeai not installed. Falling back to keyword extraction.")
+                logger.warning("google-generativeai not installed. Falling back to keyword extraction.")
                 self.method = TitleGenerationMethod.KEYWORD_EXTRACTION
             except Exception as e:
-                print(f"Warning: Failed to initialize Gemini: {e}")
+                logger.warning("Failed to initialize Gemini: %s", e)
                 self.method = TitleGenerationMethod.KEYWORD_EXTRACTION
     
     def generate(self, text: str) -> str:
@@ -143,7 +146,7 @@ class TitleGenerator:
             return title if title else self._extract_keywords(text)
             
         except Exception as e:
-            print(f"Gemini API error: {e}")
+            logger.warning("Gemini API error: %s", e)
             return self._extract_keywords(text)
     
     def _extract_keywords(self, text: str) -> str:

@@ -10,6 +10,7 @@ except ImportError:
     AIOHTTP_AVAILABLE = False
     aiohttp = None
 
+import asyncio
 import requests
 from typing import Optional, Dict, Any, Union
 from urllib.parse import urlparse
@@ -32,12 +33,13 @@ class PoolConfig:
 
 class SessionPool:
     """HTTPセッションプール管理クラス"""
-    
+
     def __init__(self, config: Optional[PoolConfig] = None):
         self.config = config or PoolConfig()
         self._sync_session: Optional[requests.Session] = None
         self._async_session = None
         self._connector = None
+        self._async_lock = asyncio.Lock()
     
     def _get_ssl_context(self):
         """SSLコンテキストを取得"""
@@ -74,33 +76,34 @@ class SessionPool:
     
     async def get_async_session(self):
         """
-        非同期セッションを取得（シングルトン）
-        
+        非同期セッションを取得（シングルトン、asyncio.Lockで排他制御）
+
         Returns:
             aiohttp.ClientSession or None
         """
         if not AIOHTTP_AVAILABLE:
             raise ImportError("aiohttp is required for async sessions")
-        
-        if self._async_session is None or self._async_session.closed:
-            self._connector = aiohttp.TCPConnector(
-                limit=self.config.max_connections,
-                limit_per_host=self.config.max_connections_per_host,
-                keepalive_timeout=self.config.keepalive_timeout,
-                ssl=self._get_ssl_context()
-            )
-            
-            timeout = aiohttp.ClientTimeout(
-                total=300,
-                connect=self.config.pool_timeout
-            )
-            
-            self._async_session = aiohttp.ClientSession(
-                connector=self._connector,
-                timeout=timeout
-            )
-        
-        return self._async_session
+
+        async with self._async_lock:
+            if self._async_session is None or self._async_session.closed:
+                self._connector = aiohttp.TCPConnector(
+                    limit=self.config.max_connections,
+                    limit_per_host=self.config.max_connections_per_host,
+                    keepalive_timeout=self.config.keepalive_timeout,
+                    ssl=self._get_ssl_context()
+                )
+
+                timeout = aiohttp.ClientTimeout(
+                    total=300,
+                    connect=self.config.pool_timeout
+                )
+
+                self._async_session = aiohttp.ClientSession(
+                    connector=self._connector,
+                    timeout=timeout
+                )
+
+            return self._async_session
     
     @contextmanager
     def sync_session(self):
@@ -195,8 +198,11 @@ class EndpointPool:
     
     async def close_all_async(self):
         """全プールを非同期で閉じる"""
-        for pool in self._pools.values():
-            await pool.close_async()
+        for pool in list(self._pools.values()):
+            try:
+                await pool.close_async()
+            except Exception:
+                pass
         self._pools.clear()
 
 

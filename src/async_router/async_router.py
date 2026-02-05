@@ -394,20 +394,23 @@ class BatchProcessor:
 # 同期API用ラッパー（既存コードとの互換性）
 class SyncRouterWrapper:
     """非同期ルーターの同期ラッパー"""
-    
+
     def __init__(self, async_router: AsyncRouter):
         self._async_router = async_router
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-    
-    def _get_loop(self) -> asyncio.AbstractEventLoop:
-        """イベントループを取得"""
+
+    def _run_async(self, coro):
+        """コルーチンを同期的に実行（ループ状態に応じた安全な実行）"""
         try:
-            self._loop = asyncio.get_running_loop()
+            asyncio.get_running_loop()
+            # 既にループが実行中 → 別スレッドで新しいループを使う
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(asyncio.run, coro)
+                return future.result()
         except RuntimeError:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-        return self._loop
-    
+            # ループが存在しない → 直接実行
+            return asyncio.run(coro)
+
     def route(
         self,
         query: str,
@@ -416,32 +419,21 @@ class SyncRouterWrapper:
         use_cache: bool = True
     ) -> TaskResult:
         """同期APIでルーティング"""
-        loop = self._get_loop()
-        
         coro = self._async_router.route(
             query=query,
             model=model,
             timeout=timeout,
             use_cache=use_cache
         )
-        
-        if loop.is_running():
-            # 既にループが実行中の場合は別スレッドで実行
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(lambda: asyncio.run(coro))
-                return future.result()
-        else:
-            return loop.run_until_complete(coro)
-    
+        return self._run_async(coro)
+
     def route_multiple(
         self,
         queries: List[Dict[str, Any]]
     ) -> List[TaskResult]:
         """複数リクエストを同期で処理"""
-        loop = self._get_loop()
         coro = self._async_router.route_multiple(queries)
-        return loop.run_until_complete(coro)
+        return self._run_async(coro)
 
 
 # ファクトリ関数

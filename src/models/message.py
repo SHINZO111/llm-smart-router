@@ -53,8 +53,13 @@ class MessageContent:
     
     @classmethod
     def from_dict(cls, data: dict) -> "MessageContent":
+        try:
+            msg_type = MessageType(data.get("type", "text"))
+        except ValueError:
+            msg_type = MessageType.TEXT
+
         return cls(
-            type=MessageType(data.get("type", "text")),
+            type=msg_type,
             text=data.get("text", ""),
             url=data.get("url"),
             mime_type=data.get("mime_type"),
@@ -105,13 +110,26 @@ class Message:
         content_data = data.get("content", {})
         if isinstance(content_data, str):
             content_data = {"text": content_data, "type": "text"}
-        
+
+        # ロールのバリデーション
+        try:
+            role = MessageRole(data.get("role", "user"))
+        except ValueError:
+            role = MessageRole.USER
+
+        # 日時のパース
+        created_at_raw = data.get("created_at")
+        try:
+            created_at = datetime.fromisoformat(created_at_raw) if created_at_raw else datetime.now()
+        except (ValueError, TypeError):
+            created_at = datetime.now()
+
         return cls(
             id=data.get("id", str(uuid.uuid4())),
             conversation_id=data.get("conversation_id", ""),
-            role=MessageRole(data.get("role", "user")),
+            role=role,
             content=MessageContent.from_dict(content_data),
-            created_at=datetime.fromisoformat(data.get("created_at")) if data.get("created_at") else datetime.now(),
+            created_at=created_at,
             tokens=data.get("tokens"),
             model=data.get("model"),
             metadata=data.get("metadata", {})

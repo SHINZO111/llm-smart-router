@@ -114,17 +114,17 @@ class ConversationUpdate(BaseModel):
 
 class MessageCreate(BaseModel):
     """Request model for adding a message"""
-    role: str = Field(..., description="Message role: user, assistant, or system")
-    content: str = Field(..., description="Message content")
-    model: Optional[str] = None
-    tokens: Optional[int] = None
+    role: str = Field(..., max_length=20, description="Message role: user, assistant, or system")
+    content: str = Field(..., max_length=100000, description="Message content")
+    model: Optional[str] = Field(None, max_length=100)
+    tokens: Optional[int] = Field(None, ge=0)
 
 
 class TopicCreate(BaseModel):
     """Request model for creating a topic"""
     name: str = Field(..., min_length=1, max_length=100)
-    description: Optional[str] = None
-    color: str = "#3B82F6"
+    description: Optional[str] = Field(None, max_length=500)
+    color: str = Field("#3B82F6", pattern=r'^#[0-9a-fA-F]{6}$')
     parent_id: Optional[str] = None
 
 
@@ -267,7 +267,7 @@ async def delete_conversation(conversation_id: str):
 @router.get("/conversations/{conversation_id}/messages", response_model=List[Dict[str, Any]])
 async def get_messages(
     conversation_id: str,
-    limit: Optional[int] = Query(None, ge=1),
+    limit: Optional[int] = Query(None, ge=1, le=1000),
     offset: int = Query(0, ge=0)
 ):
     """Get messages for a conversation"""

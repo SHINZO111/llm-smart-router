@@ -244,7 +244,11 @@ class RetryHandler {
 
 class LLMRouter {
   constructor(configPath = './config.yaml') {
-    this.config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+    try {
+      this.config = yaml.load(fs.readFileSync(configPath, 'utf8'));
+    } catch (error) {
+      throw new Error(`設定ファイル読み込み失敗 (${configPath}): ${error.message}`);
+    }
     this.anthropic = new Anthropic({
       apiKey: process.env.ANTHROPIC_API_KEY
     });
@@ -514,8 +518,12 @@ class LLMRouter {
         }
       );
       
-      const choice = response.data.choices[0];
-      
+      const choices = response.data.choices;
+      if (!choices || !choices[0]) {
+        throw new Error('Local LLM returned empty choices');
+      }
+      const choice = choices[0];
+
       return {
         content: choice.message.content,
         tokens: {
@@ -551,6 +559,10 @@ class LLMRouter {
         messages: [{ role: 'user', content: input }]
       });
       
+      if (!message.content || !message.content[0]) {
+        throw new Error('Claude returned empty content');
+      }
+
       return {
         content: message.content[0].text,
         tokens: {

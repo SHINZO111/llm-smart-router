@@ -4,6 +4,7 @@ OpenRouter経由または直接API経由で利用
 """
 
 import os
+import asyncio
 import aiohttp
 from typing import Optional, List, Dict, Any, AsyncGenerator
 
@@ -21,25 +22,26 @@ from .base_model import (
 class KimiAdapter(BaseModelAdapter):
     """
     Kimi (kimi-coding/k2p5) アダプター
-    
+
     特徴:
     - コーディングに強い
     - 長文脈対応
     - 推論能力が高い
     """
-    
+
     DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
     DEFAULT_MODEL = "kimi-coding/k2p5"
-    
+
     # コスト設定（USD per 1K tokens）
     COST_INPUT = 0.002
     COST_OUTPUT = 0.008
-    
+
     def __init__(self, config: Optional[ModelConfig] = None):
         if config is None:
             config = self._create_default_config()
         super().__init__(config)
         self.session: Optional[aiohttp.ClientSession] = None
+        self._session_lock = asyncio.Lock()
     
     def _create_default_config(self) -> ModelConfig:
         """デフォルト設定を作成"""
@@ -65,17 +67,18 @@ class KimiAdapter(BaseModelAdapter):
         return True
     
     async def _get_session(self) -> aiohttp.ClientSession:
-        """HTTPセッションを取得（遅延初期化）"""
-        if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession(
-                headers={
-                    "Authorization": f"Bearer {self.config.api_key}",
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://llm-smart-router.local",
-                    "X-Title": "LLM Smart Router"
-                }
-            )
-        return self.session
+        """HTTPセッションを取得（遅延初期化、スレッドセーフ）"""
+        async with self._session_lock:
+            if self.session is None or self.session.closed:
+                self.session = aiohttp.ClientSession(
+                    headers={
+                        "Authorization": f"Bearer {self.config.api_key}",
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": "https://llm-smart-router.local",
+                        "X-Title": "LLM Smart Router"
+                    }
+                )
+            return self.session
     
     async def generate(
         self,

@@ -4,6 +4,7 @@ Google AI Studio / Vertex AI経由で利用
 """
 
 import os
+import asyncio
 import aiohttp
 import base64
 from typing import Optional, List, Dict, Any, AsyncGenerator
@@ -41,7 +42,8 @@ class GeminiAdapter(BaseModelAdapter):
             config = self._create_default_config()
         super().__init__(config)
         self.session: Optional[aiohttp.ClientSession] = None
-    
+        self._session_lock = asyncio.Lock()
+
     def _create_default_config(self) -> ModelConfig:
         """デフォルト設定を作成"""
         api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
@@ -54,7 +56,7 @@ class GeminiAdapter(BaseModelAdapter):
             max_tokens=8192,
             temperature=0.7
         )
-    
+
     def validate_config(self) -> bool:
         """設定を検証"""
         if not self.config.api_key:
@@ -62,12 +64,13 @@ class GeminiAdapter(BaseModelAdapter):
                 "Google APIキーが必要です。GOOGLE_API_KEY または GEMINI_API_KEY を設定してください。"
             )
         return True
-    
+
     async def _get_session(self) -> aiohttp.ClientSession:
-        """HTTPセッションを取得（遅延初期化）"""
-        if self.session is None or self.session.closed:
-            self.session = aiohttp.ClientSession()
-        return self.session
+        """HTTPセッションを取得（遅延初期化、スレッドセーフ）"""
+        async with self._session_lock:
+            if self.session is None or self.session.closed:
+                self.session = aiohttp.ClientSession()
+            return self.session
     
     def _build_url(self, action: str = "generateContent") -> str:
         """API URLを構築"""

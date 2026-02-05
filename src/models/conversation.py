@@ -62,14 +62,29 @@ class Conversation:
     @classmethod
     def from_dict(cls, data: dict) -> "Conversation":
         """辞書からインスタンスを作成"""
+        # ステータスのバリデーション
+        try:
+            status = ConversationStatus(data.get("status", "active"))
+        except ValueError:
+            status = ConversationStatus.ACTIVE
+
+        # 日時のパース（不正な値にも対応）
+        def _parse_dt(value):
+            if not value:
+                return datetime.now()
+            try:
+                return datetime.fromisoformat(value)
+            except (ValueError, TypeError):
+                return datetime.now()
+
         return cls(
             id=data.get("id", str(uuid.uuid4())),
             title=data.get("title", ""),
             user_id=data.get("user_id", ""),
-            status=ConversationStatus(data.get("status", "active")),
+            status=status,
             topic_id=data.get("topic_id"),
-            created_at=datetime.fromisoformat(data.get("created_at")) if data.get("created_at") else datetime.now(),
-            updated_at=datetime.fromisoformat(data.get("updated_at")) if data.get("updated_at") else datetime.now(),
+            created_at=_parse_dt(data.get("created_at")),
+            updated_at=_parse_dt(data.get("updated_at")),
             message_count=data.get("message_count", 0),
             summary=data.get("summary"),
             metadata=data.get("metadata", {})
@@ -114,11 +129,17 @@ class Topic:
     @classmethod
     def from_dict(cls, data: dict) -> "Topic":
         """辞書からインスタンスを作成"""
+        created_at_raw = data.get("created_at")
+        try:
+            created_at = datetime.fromisoformat(created_at_raw) if created_at_raw else datetime.now()
+        except (ValueError, TypeError):
+            created_at = datetime.now()
+
         return cls(
             id=data.get("id", str(uuid.uuid4())),
             name=data.get("name", ""),
             description=data.get("description"),
             color=data.get("color", "#3B82F6"),
             parent_id=data.get("parent_id"),
-            created_at=datetime.fromisoformat(data.get("created_at")) if data.get("created_at") else datetime.now()
+            created_at=created_at
         )

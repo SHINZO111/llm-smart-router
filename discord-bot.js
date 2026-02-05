@@ -117,8 +117,12 @@ function checkRateLimit(userId) {
   // 古いエントリをクリーンアップ（1000件超過時）
   if (rateLimitMap.size > 1000) {
     const cutoff = now - RATE_LIMIT_MS * 10;
+    const keysToDelete = [];
     for (const [uid, ts] of rateLimitMap) {
-      if (ts < cutoff) rateLimitMap.delete(uid);
+      if (ts < cutoff) keysToDelete.push(uid);
+    }
+    for (const key of keysToDelete) {
+      rateLimitMap.delete(key);
     }
   }
 

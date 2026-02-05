@@ -8,6 +8,7 @@ LLM Smart Router - リトライハンドラーモジュール
 import asyncio
 import logging
 import random
+import time
 from typing import Callable, TypeVar, Tuple, Optional, List
 from functools import wraps
 
@@ -61,7 +62,6 @@ class RetryConfig:
             ModelUnavailableError,
             APIError,
             TimeoutError,
-            ConnectionError  # Python標準のConnectionError
         )
 
 
@@ -288,7 +288,6 @@ class RetryHandler:
                 
                 if wait_time:
                     logger.info(f"[{self.operation_name}] {wait_time:.1f}秒待機後リトライ...")
-                    import time
                     time.sleep(wait_time)
     
     def get_retry_history(self) -> List[Exception]:

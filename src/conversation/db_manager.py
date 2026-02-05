@@ -34,9 +34,9 @@ class ConversationDB:
         try:
             yield conn
             conn.commit()
-        except Exception as e:
+        except Exception:
             conn.rollback()
-            raise e
+            raise
         finally:
             conn.close()
     

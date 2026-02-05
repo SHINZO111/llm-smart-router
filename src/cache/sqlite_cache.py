@@ -106,8 +106,10 @@ class SQLiteCache:
         2つのテキストの類似度を計算（コサイン類似度ベース）
         シンプルなn-gramベースの実装
         """
-        text1 = self._clean_text(text1)
-        text2 = self._clean_text(text2)
+        # 長大なテキストは先頭のみ比較（パフォーマンス対策）
+        MAX_COMPARE_LEN = 2000
+        text1 = self._clean_text(text1[:MAX_COMPARE_LEN])
+        text2 = self._clean_text(text2[:MAX_COMPARE_LEN])
         
         if not text1 or not text2:
             return 0.0
@@ -143,7 +145,7 @@ class SQLiteCache:
             metadata=json.loads(row[4] or '{}'),
             created_at=row[5],
             expires_at=row[6],
-            access_count=row[7] + 1,
+            access_count=row[7],
             last_accessed=time.time()
         )
 
