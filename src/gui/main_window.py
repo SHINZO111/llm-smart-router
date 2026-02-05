@@ -75,8 +75,15 @@ class Colors:
     CYAN = '#06b6d4'
 
     TEXT = '#eef2ff'
+    TEXT_PRIMARY = '#eef2ff'
     TEXT_DIM = '#94a3b8'
     TEXT_MUTED = '#64748b'
+
+    BG_TERTIARY = '#1e1e35'
+    BG_HOVER = '#252545'
+
+    WARNING = '#f59e0b'
+    ERROR = '#ef4444'
 
     GRADIENT_START = '#6366f1'
     GRADIENT_END = '#8b5cf6'
@@ -1010,6 +1017,7 @@ class MainWindow(QMainWindow):
         self.model_combo.addItem("  Auto (Recommended)", "auto")
         self.model_combo.addItem("  Local LLM", "local")
         self.model_combo.addItem("  Claude API", "claude")
+        self._populate_model_combo()
         self.model_combo.currentIndexChanged.connect(self._on_model_changed)
         ml.addWidget(self.model_combo)
 
@@ -1020,6 +1028,19 @@ class MainWindow(QMainWindow):
         self.model_status.setObjectName("status_ok")
         status_row.addWidget(self.model_status)
         status_row.addStretch()
+
+        # モデルリフレッシュボタン
+        self._refresh_btn = QPushButton("Scan")
+        self._refresh_btn.setFixedWidth(60)
+        self._refresh_btn.setStyleSheet(
+            f"QPushButton {{ background: {Colors.BG_TERTIARY}; color: {Colors.TEXT_MUTED};"
+            f" border: 1px solid {Colors.BORDER}; border-radius: 4px; padding: 2px 6px; font-size: 11px; }}"
+            f" QPushButton:hover {{ background: {Colors.BG_HOVER}; color: {Colors.TEXT_PRIMARY}; }}"
+        )
+        self._refresh_btn.setToolTip("ローカルLLMランタイムを再スキャン")
+        self._refresh_btn.clicked.connect(self._refresh_models)
+        status_row.addWidget(self._refresh_btn)
+
         ml.addLayout(status_row)
         lay.addWidget(mg)
 
@@ -1343,16 +1364,157 @@ class MainWindow(QMainWindow):
         else:
             self._char_counter.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 11px;")
 
+    def _populate_model_combo(self):
+        """レジストリからモデルコンボを動的更新"""
+        try:
+            import scanner.registry as _rg
+
+            project_root = Path(__file__).parent.parent.parent
+            registry = _rg.ModelRegistry(
+                cache_path=str(project_root / "data" / "model_registry.json")
+            )
+            if registry.get_total_count() == 0:
+                return  # レジストリ空ならデフォルト3項目のまま
+
+            # デフォルト3項目をクリアして再構築
+            self.model_combo.clear()
+            self.model_combo.addItem("  Auto (Recommended)", "auto")
+
+            # ローカルモデル
+            local_models = registry.get_local_models()
+            if local_models:
+                for m in local_models:
+                    rt = m.runtime.runtime_type.value if m.runtime else "local"
+                    label = f"  [{rt}] {m.name}"
+                    self.model_combo.addItem(label, f"local:{m.id}")
+
+            # セパレーター
+            if local_models:
+                self.model_combo.insertSeparator(self.model_combo.count())
+
+            # クラウドモデル
+            cloud_models = registry.get_cloud_models()
+            if cloud_models:
+                for m in cloud_models:
+                    label = f"  [{m.provider}] {m.name}"
+                    self.model_combo.addItem(label, f"cloud:{m.id}")
+            else:
+                # フォールバック: 従来のハードコード項目
+                self.model_combo.addItem("  Claude API", "claude")
+
+        except ImportError:
+            pass  # scanner パッケージ未インストール時はデフォルトのまま
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).warning(f"モデルコンボ更新失敗: {e}")
+
+    def _refresh_models(self):
+        """Scanボタン: バックグラウンドでランタイムスキャン実行"""
+        # 二重スキャン防止
+        if hasattr(self, '_scan_thread') and self._scan_thread is not None and self._scan_thread.isRunning():
+            return
+
+        self._refresh_btn.setEnabled(False)
+        self._refresh_btn.setText("...")
+        self.model_status.setText("Scanning...")
+        self._status_dot.set_color(Colors.WARNING)
+
+        class _ScanThread(QThread):
+            finished = Signal(int)
+
+            def __init__(self, parent=None):
+                super().__init__(parent)
+
+            def run(self):
+                import asyncio
+                try:
+                    import scanner.scanner as _sc
+                    import scanner.registry as _rg
+                    s = _sc.MultiRuntimeScanner()
+                    loop = asyncio.new_event_loop()
+                    try:
+                        results = loop.run_until_complete(s.scan_all())
+                    finally:
+                        loop.close()
+                    project_root = Path(__file__).parent.parent.parent
+                    registry = _rg.ModelRegistry(
+                        cache_path=str(project_root / "data" / "model_registry.json")
+                    )
+                    registry.update(results)
+                    self.finished.emit(registry.get_total_count())
+                except Exception:
+                    self.finished.emit(-1)
+
+        # 選択保存
+        self._prev_model_data = self.model_combo.currentData()
+
+        self._scan_thread = _ScanThread(parent=self)
+
+        def _on_done(count):
+            self._refresh_btn.setEnabled(True)
+            self._refresh_btn.setText("Scan")
+            if count >= 0:
+                self._populate_model_combo()
+                # 選択復元
+                if self._prev_model_data:
+                    idx = self.model_combo.findData(self._prev_model_data)
+                    if idx >= 0:
+                        self.model_combo.setCurrentIndex(idx)
+                self.model_status.setText(f"{count} models detected")
+                self._status_dot.set_color(Colors.SECONDARY)
+            else:
+                self.model_status.setText("Scan failed")
+                self._status_dot.set_color(Colors.ERROR)
+
+        self._scan_thread.finished.connect(_on_done)
+        self._scan_thread.start()
+
+    def _get_fallback_summary(self):
+        """fallback_priority.jsonからチェーン概要を生成"""
+        try:
+            import json as _json
+            priority_path = Path(__file__).resolve().parent.parent.parent / "data" / "fallback_priority.json"
+            if not priority_path.exists():
+                return None
+            data = _json.loads(priority_path.read_text(encoding="utf-8"))
+            refs = data.get("priority", [])
+            if not refs:
+                return None
+            names = []
+            for ref in refs[:4]:  # 最大4つまで表示
+                if ref.startswith("local:"):
+                    mid = ref[len("local:"):]
+                    names.append(mid.split("/")[-1] if "/" in mid else mid)
+                elif ref == "cloud":
+                    names.append("Claude")
+                else:
+                    names.append(ref)
+            summary = " → ".join(names)
+            if len(refs) > 4:
+                summary += f" (+{len(refs) - 4})"
+            return summary
+        except Exception:
+            return None
+
     def _on_model_changed(self, idx):
         m = self.model_combo.currentData()
+        if not m:
+            return
         if m == "auto":
-            self.model_status.setText("Auto routing active")
+            summary = self._get_fallback_summary()
+            if summary:
+                self.model_status.setText(f"Auto: {summary}")
+            else:
+                self.model_status.setText("Auto routing active")
             self._status_dot.set_color(Colors.SECONDARY)
-        elif m == "local":
-            self.model_status.setText("Local LLM only")
+        elif m.startswith("local:") or m == "local":
+            self.model_status.setText(f"Local: {m.replace('local:', '')}")
             self._status_dot.set_color(Colors.ACCENT)
+        elif m.startswith("cloud:") or m == "claude":
+            self.model_status.setText(f"Cloud: {m.replace('cloud:', '')}")
+            self._status_dot.set_color(Colors.CYAN)
         else:
-            self.model_status.setText("Claude API only")
+            self.model_status.setText(m)
             self._status_dot.set_color(Colors.CYAN)
         
         # 現在の会話のモデルを更新

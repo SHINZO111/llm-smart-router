@@ -40,5 +40,8 @@ backups/
 *.exe
 *.spec
 
+# External projects
+webclaw/
+
 # Nested repo artifact
 llm-smart-router/

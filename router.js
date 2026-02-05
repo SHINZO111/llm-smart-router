@@ -258,6 +258,12 @@ class LLMRouter {
       this.config.database?.path || './data/conversations.db'
     );
     
+    // 検出済みモデルレジストリの読み込み
+    this.detectedModels = this._loadDetectedModels();
+
+    // フォールバック優先順位の読み込み
+    this.fallbackPriority = this._loadFallbackPriority();
+
     // Vision対応モデル設定
     this.visionModels = {
       claude: {
@@ -274,40 +280,274 @@ class LLMRouter {
   }
 
   /**
+   * 検出済みモデルレジストリを読み込む
+   * data/model_registry.json が存在すればパースし、なければnull
+   */
+  _loadDetectedModels() {
+    const registryPath = path.join(process.cwd(), 'data', 'model_registry.json');
+
+    if (!fs.existsSync(registryPath)) {
+      return null;
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(registryPath, 'utf8'));
+
+      // 構造バリデーション
+      if (!data || typeof data.models !== 'object' || data.models === null) {
+        console.warn('⚠️  Model registry has invalid structure');
+        return null;
+      }
+
+      // キャッシュ鮮度チェック（設定のTTL以上古ければ警告）
+      if (data.last_scan) {
+        const scanDate = new Date(data.last_scan);
+        if (!isNaN(scanDate.getTime())) {
+          const ageMs = Date.now() - scanDate.getTime();
+          const cacheTtl = (this.config.scanner?.cache_ttl || 300) * 1000;
+          if (ageMs > cacheTtl) {
+            console.warn(`⚠️  Model registry is stale (> ${cacheTtl/1000}s). Consider running: python -m scanner scan`);
+          }
+        }
+      }
+
+      return data.models;
+    } catch (error) {
+      console.warn('⚠️  Failed to load model registry:', error.message);
+      return null;
+    }
+  }
+
+  /**
+   * 検出済みローカルモデル一覧を取得
+   */
+  getAvailableLocalModels() {
+    if (!this.detectedModels) return [];
+
+    const localModels = [];
+    for (const [key, models] of Object.entries(this.detectedModels)) {
+      if (key !== 'cloud') {
+        localModels.push(...models);
+      }
+    }
+    return localModels;
+  }
+
+  /**
+   * フォールバック優先順位を読み込む
+   * data/fallback_priority.json が存在すればパース、なければデフォルト
+   */
+  _loadFallbackPriority() {
+    const priorityPath = path.join(process.cwd(), 'data', 'fallback_priority.json');
+
+    if (!fs.existsSync(priorityPath)) {
+      return ['local', 'cloud'];
+    }
+
+    try {
+      const data = JSON.parse(fs.readFileSync(priorityPath, 'utf8'));
+
+      if (!data || !Array.isArray(data.priority) || data.priority.length === 0) {
+        console.warn('⚠️  Fallback priority has invalid structure, using default');
+        return ['local', 'cloud'];
+      }
+
+      // 各エントリのバリデーション: 文字列のみ許可
+      const valid = data.priority.filter(ref => typeof ref === 'string' && ref.length > 0);
+      if (valid.length === 0) {
+        return ['local', 'cloud'];
+      }
+
+      console.log(`📋 フォールバック優先順位: ${valid.join(' → ')}`);
+      return valid;
+    } catch (error) {
+      console.warn('⚠️  Failed to load fallback priority:', error.message);
+      return ['local', 'cloud'];
+    }
+  }
+
+  /**
+   * モデル参照文字列から単一モデルを実行する統一インターフェース
+   * @param {string} modelRef - "local:model-id", "local", "cloud"
+   * @param {string} input - 入力テキスト
+   * @returns {Promise<{content, modelName, tokens, modelType}>}
+   */
+  async _executeSingleModel(modelRef, input) {
+    if (modelRef.startsWith('local:')) {
+      const modelId = modelRef.slice('local:'.length);
+      const result = await this.executeLocal(input, modelId);
+      return { ...result, modelType: 'local' };
+    }
+    if (modelRef === 'local') {
+      const result = await this.executeLocal(input, null);
+      return { ...result, modelType: 'local' };
+    }
+    if (modelRef === 'cloud' || modelRef === 'claude') {
+      const result = await this.executeClaude(input);
+      return { ...result, modelType: 'cloud', modelName: this.config.models.cloud.model };
+    }
+    throw new Error(`Unknown model reference: ${modelRef}`);
+  }
+
+  /**
+   * フォールバックチェーンで実行
+   * preferredModelRefを最初に試行し、失敗したら優先順位リストの残りを順に試す
+   * @param {string} input - 入力テキスト
+   * @param {string|null} preferredModelRef - 最初に試すモデル参照（null=チェーン先頭から）
+   * @param {object} context - ルーティングコンテキスト
+   * @returns {Promise<object>} - executeWithModelと同じ形式
+   */
+  async executeWithFallbackChain(input, preferredModelRef = null, context = {}) {
+    const chain = this.fallbackPriority;
+
+    // 試行順序を構築: preferred → 残りのチェーン（preferred以外）
+    let tryOrder;
+    if (preferredModelRef) {
+      tryOrder = [preferredModelRef, ...chain.filter(ref => ref !== preferredModelRef)];
+    } else {
+      tryOrder = [...chain];
+    }
+
+    const errors = [];
+    const icons = ['🥇', '🥈', '🥉'];
+
+    for (let i = 0; i < tryOrder.length; i++) {
+      const modelRef = tryOrder[i];
+      const icon = icons[i] || '🔄';
+
+      console.log(`\n${icon} ${i === 0 ? '第1候補' : `フォールバック #${i}`}: ${modelRef}`);
+      console.log(`${'='.repeat(60)}`);
+
+      try {
+        const startTime = Date.now();
+        const result = await this._executeSingleModel(modelRef, input);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+        // 統計更新
+        if (result.modelType === 'local') {
+          this.stats.local_used++;
+          const savedCost = this.calculateCost(result, 'cloud').total;
+          this.stats.total_saved += savedCost;
+        } else {
+          this.stats.cloud_used++;
+        }
+        const cost = this.calculateCost(result, result.modelType);
+        this.stats.total_cost += cost.total;
+
+        // 成功ログ
+        console.log(`\n${'─'.repeat(60)}`);
+        console.log(`✅ 完了 (${modelRef})`);
+        console.log(`⏱️  処理時間: ${elapsed}秒`);
+        console.log(`📊 トークン: ${result.tokens.input} in / ${result.tokens.output} out`);
+        console.log(`💰 コスト: ¥${cost.total.toFixed(2)}`);
+        if (i > 0) {
+          console.log(`🔄 フォールバック #${i} で成功`);
+        }
+        console.log(`${'─'.repeat(60)}\n`);
+
+        return {
+          model: result.modelType,
+          modelName: result.modelName || result.modelType,
+          response: result.content,
+          metadata: {
+            elapsed,
+            tokens: result.tokens,
+            cost: cost.total,
+            context,
+            fallbackUsed: i > 0,
+            fallbackLevel: i,
+            modelRef
+          }
+        };
+      } catch (error) {
+        console.error(`❌ ${modelRef} 失敗: ${error.message}`);
+        errors.push({ modelRef, error: error.message });
+
+        if (i < tryOrder.length - 1) {
+          console.log(`🔄 次の候補へフォールバック...`);
+        }
+      }
+    }
+
+    // 全モデル失敗
+    const errorSummary = errors.map(e => {
+      const msg = e.error.substring(0, 100); // エラーメッセージを100文字に切り詰め
+      return `  - ${e.modelRef}: ${msg}`;
+    }).join('\n');
+    throw new Error(`全モデル失敗:\n${errorSummary}`);
+  }
+
+  /**
    * メインルーティング関数
    */
   async route(input, options = {}) {
     this.stats.total_requests++;
-    
+
     console.log('\n🔄 Smart Router 起動...');
     console.log(`📝 入力: ${input.substring(0, 100)}${input.length > 100 ? '...' : ''}`);
-    
+
     // 画像がある場合はVisionタスク
     if (options.imagePath || options.imageBase64) {
       this.stats.vision_requests++;
       console.log(`🖼️ 画像検出: Visionモード`);
       const result = await this.routeVision(input, options);
-      
+
       // Auto-save Vision conversation
       await this.history.autoSave(input, result.response, result.model);
-      
+
       return result;
     }
-    
+
     try {
+      // モデル直接指定（GUIからの選択）
+      if (options.modelType && options.modelType !== 'auto') {
+        const mt = options.modelType;
+
+        if (mt.startsWith('local:')) {
+          // 特定のローカルモデルを指定実行
+          const modelId = mt.slice('local:'.length);
+          console.log(`\n🎯 モデル指定: ローカル [${modelId}]`);
+          const result = await this.executeWithModel('local', input, { reason: '手動選択' }, modelId);
+          await this.history.autoSave(input, result.response, result.model);
+          return result;
+        }
+
+        if (mt.startsWith('cloud:')) {
+          // 特定のクラウドモデルを指定（将来拡張）
+          console.log(`\n🎯 モデル指定: クラウド [${mt.slice('cloud:'.length)}]`);
+          const result = await this.executeWithModel('cloud', input, { reason: '手動選択' });
+          await this.history.autoSave(input, result.response, result.model);
+          return result;
+        }
+
+        if (mt === 'local') {
+          console.log(`\n🎯 モデル指定: ローカル`);
+          const result = await this.executeWithModel('local', input, { reason: '手動選択' });
+          await this.history.autoSave(input, result.response, result.model);
+          return result;
+        }
+
+        if (mt === 'cloud' || mt === 'claude') {
+          console.log(`\n🎯 モデル指定: クラウド`);
+          const result = await this.executeWithModel('cloud', input, { reason: '手動選択' });
+          await this.history.autoSave(input, result.response, result.model);
+          return result;
+        }
+      }
+
       // Phase 1: Hard Rules チェック
       const hardRule = this.checkHardRules(input);
       if (hardRule) {
         console.log(`\n⚡ 確定ルール適用: ${hardRule.name}`);
         console.log(`📌 理由: ${hardRule.reason}`);
         const result = await this.executeWithModel(hardRule.model, input, hardRule);
-        
+
         // Auto-save after successful response
         await this.history.autoSave(input, result.response, result.model);
-        
+
         return result;
       }
-      
+
       // Phase 2: Intelligent Routing
       if (this.config.routing.intelligent_routing.enabled) {
         const decision = await this.intelligentTriage(input);
@@ -315,34 +555,34 @@ class LLMRouter {
         console.log(`   モデル: ${decision.model}`);
         console.log(`   確信度: ${(decision.confidence * 100).toFixed(1)}%`);
         console.log(`   理由: ${decision.reason}`);
-        
+
         // 確信度が低い場合はClaudeへ
         const threshold = this.config.routing.intelligent_routing.confidence_threshold;
-        let result;
+        let firstModel = decision.model;
         if (decision.model === 'local' && decision.confidence < threshold) {
           console.log(`\n⚠️  確信度が低いため、Claudeに切り替えます`);
-          result = await this.executeWithModel('cloud', input, decision);
-        } else {
-          result = await this.executeWithModel(decision.model, input, decision);
+          firstModel = 'cloud';
         }
-        
-        // Auto-save after successful response
+
+        // triageの推薦モデルを最初に試し、失敗したら優先順位チェーンでフォールバック
+        const result = await this.executeWithFallbackChain(
+          input, firstModel, decision
+        );
+
         await this.history.autoSave(input, result.response, result.model);
-        
         return result;
       }
-      
-      // Phase 3: Default (fallback)
-      console.log(`\n📍 デフォルトモデル使用: ${this.config.default}`);
-      const result = await this.executeWithModel(this.config.default, input, { reason: 'デフォルト' });
-      
-      // Auto-save after successful response
+
+      // Phase 3: Default — フォールバックチェーンの先頭から実行
+      console.log(`\n📋 フォールバックチェーンで実行...`);
+      const result = await this.executeWithFallbackChain(input, null, { reason: 'デフォルト' });
+
       await this.history.autoSave(input, result.response, result.model);
-      
       return result;
-      
+
     } catch (error) {
       console.error(`\n❌ エラー: ${error.message}`);
+      // フォールバックチェーンも全失敗した場合、旧handleErrorを最終手段として試行
       return await this.handleError(error, input);
     }
   }
@@ -697,18 +937,18 @@ class LLMRouter {
   /**
    * モデル実行
    */
-  async executeWithModel(modelType, input, context = {}) {
+  async executeWithModel(modelType, input, context = {}, specificModelId = null) {
     const startTime = Date.now();
-    
+
     console.log(`\n${'='.repeat(60)}`);
-    console.log(`🚀 実行: ${modelType.toUpperCase()} モデル`);
+    console.log(`🚀 実行: ${modelType.toUpperCase()} モデル${specificModelId ? ` [${specificModelId}]` : ''}`);
     console.log(`${'='.repeat(60)}`);
-    
+
     try {
       let result;
-      
+
       if (modelType === 'local') {
-        result = await this.executeLocal(input);
+        result = await this.executeLocal(input, specificModelId);
         this.stats.local_used++;
       } else {
         result = await this.executeClaude(input);
@@ -738,6 +978,7 @@ class LLMRouter {
       
       return {
         model: modelType,
+        modelName: result.modelName || modelType,
         response: result.content,
         metadata: {
           elapsed,
@@ -755,20 +996,61 @@ class LLMRouter {
   /**
    * ローカルLLM実行
    */
-  async executeLocal(input) {
+  async executeLocal(input, specificModelId = null) {
     const config = this.config.models.local;
-    
+
+    // レジストリに検出済みローカルモデルがあれば優先使用
+    let endpoint = config.endpoint;
+    let model = config.model;
+    const availableLocal = this.getAvailableLocalModels();
+    if (availableLocal.length > 0) {
+      let matched;
+
+      if (specificModelId) {
+        // GUIから特定モデルが指定された場合、そのモデルを検索
+        matched = availableLocal.find(m => m.id === specificModelId);
+        if (!matched) {
+          const available = availableLocal.map(m => m.id).join(', ');
+          throw new Error(`指定モデル "${specificModelId}" が見つかりません。利用可能: ${available}`);
+        }
+      } else {
+        // 自動選択: config.yamlのモデルIDに一致するものを優先、なければ最初のモデル
+        if (availableLocal.length === 0) {
+          throw new Error('利用可能なローカルモデルがありません');
+        }
+        matched = availableLocal.find(m => m.id === config.model) || availableLocal[0];
+      }
+
+      if (matched.endpoint) {
+        // SSRF防止: localhost/127.0.0.1のみ許可
+        try {
+          const parsed = new URL(matched.endpoint);
+          const host = parsed.hostname;
+          if (host === 'localhost' || host === '127.0.0.1' || host === '::1') {
+            endpoint = matched.endpoint;
+          } else {
+            console.warn(`⚠️  Ignoring non-local endpoint: ${host}`);
+          }
+        } catch {
+          console.warn('⚠️  Invalid endpoint URL in registry');
+        }
+      }
+      if (matched.id) {
+        model = matched.id;
+      }
+    }
+
     const response = await axios.post(
-      `${config.endpoint}/chat/completions`,
+      `${endpoint}/chat/completions`,
       {
-        model: config.model,
+        model: model,
         messages: [{ role: 'user', content: input }],
         temperature: config.temperature,
         max_tokens: config.max_tokens
       },
       { timeout: config.timeout }
     );
-    
+
     const choices = response.data.choices;
     if (!choices || !choices[0]) {
       throw new Error('Local LLM returned empty choices');
@@ -777,6 +1059,7 @@ class LLMRouter {
 
     return {
       content: choice.message.content,
+      modelName: model,
       tokens: {
         input: response.data.usage?.prompt_tokens || 0,
         output: response.data.usage?.completion_tokens || 0
@@ -905,7 +1188,7 @@ if (process.argv[1] && path.resolve(__filename) === path.resolve(process.argv[1]
     console.log('Options:');
     console.log('  --image <path>   Image file path');
     console.log('  --base64 <data>  Base64 encoded image');
-    console.log('  --model <model>  Model type (auto/local/claude)');
+    console.log('  --model <model>  Model type (auto/local/cloud/local:<model-id>)');
     process.exit(1);
   }
   

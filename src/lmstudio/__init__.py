@@ -1,8 +1,21 @@
 """
 LM Studio Model Detector Package
 
-LM StudioのOpenAI互換APIを使用してモデルを自動検出するパッケージ
+⚠️ 非推奨: このパッケージは scanner パッケージに統合されました。
+  from scanner import MultiRuntimeScanner, ModelRegistry
+を使用してください。
+
+後方互換性のため、既存のインポートは引き続き動作します。
 """
+
+import warnings
+
+warnings.warn(
+    "lmstudio パッケージは非推奨です。scanner パッケージを使用してください。"
+    " 例: from scanner import MultiRuntimeScanner",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 from .model_detector import (
     LMStudioModelDetector,

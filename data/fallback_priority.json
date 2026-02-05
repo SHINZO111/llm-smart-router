@@ -1,0 +1,9 @@
+{
+  "priority": [
+    "local:qwen/qwen3-4b-2507",
+    "local:essentialai/rnj-1",
+    "local:deepseek/deepseek-r1-0528-qwen3-8b",
+    "cloud"
+  ],
+  "updated_at": "2026-02-06T00:15:00.000000"
+}

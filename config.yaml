@@ -323,6 +323,37 @@ launcher:
     timeout: 15.0
     # bot_path: null    # カスタムパス（デフォルト: discord-bot.js）
 
+# モデルスキャナー設定
+scanner:
+  enabled: true
+  timeout: 2.0          # ポートあたりのスキャンタイムアウト（秒）
+  cache_ttl: 300        # レジストリキャッシュTTL（秒）= 5分
+  include_cloud: true   # クラウドAPIキー検出を含める
+  # スキャン対象ポート
+  # 注意: port 8000 は FastAPI サーバーが使用するため除外
+  scan_ports:
+    - port: 1234
+      runtime: lmstudio
+      name: "LM Studio"
+    - port: 11434
+      runtime: ollama
+      name: "Ollama"
+    - port: 8080
+      runtime: llamacpp
+      name: "llama.cpp"
+    - port: 5001
+      runtime: koboldcpp
+      name: "KoboldCpp"
+    - port: 1337
+      runtime: jan
+      name: "Jan"
+    - port: 4891
+      runtime: gpt4all
+      name: "GPT4All"
+    - port: 8888  # 本来vLLMは8000だがFastAPIと衝突するため8888を使用
+      runtime: vllm
+      name: "vLLM"
+
 # ログ
 logging:
   enabled: true

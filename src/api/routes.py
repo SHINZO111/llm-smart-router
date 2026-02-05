@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
 from pydantic import BaseModel, Field
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -612,3 +613,57 @@ async def get_message_history(
         "message_count": len(history),
         "messages": history
     }
+
+
+# ==================== Model Scanner Endpoints ====================
+
+@router.get("/models/detected")
+@_handle_errors
+async def get_detected_models():
+    """
+    検出済みモデル一覧を返す（レジストリから読み込み）
+    """
+    from scanner.registry import ModelRegistry
+
+    registry_path = str(project_root.parent / "data" / "model_registry.json")
+    registry = ModelRegistry(cache_path=registry_path)
+
+    return {
+        "local": [m.to_dict() for m in registry.get_local_models()],
+        "cloud": [m.to_dict() for m in registry.get_cloud_models()],
+        "total": registry.get_total_count(),
+        "last_scan": registry.last_scan_iso,
+        "cache_valid": registry.is_cache_valid(),
+    }
+
+
+_scan_lock = asyncio.Lock()
+
+
+@router.post("/models/scan")
+@_handle_errors
+async def trigger_model_scan(background_tasks: BackgroundTasks):
+    """
+    バックグラウンドでモデルスキャンを開始する
+    """
+    if _scan_lock.locked():
+        return {"status": "already_running", "message": "スキャン実行中です"}
+
+    from scanner.scanner import MultiRuntimeScanner
+    from scanner.registry import ModelRegistry
+
+    async def _run_scan():
+        async with _scan_lock:
+            scanner = MultiRuntimeScanner()
+            loop = asyncio.new_event_loop()
+            try:
+                results = loop.run_until_complete(scanner.scan_all())
+            finally:
+                loop.close()
+            registry_path = str(project_root.parent / "data" / "model_registry.json")
+            registry = ModelRegistry(cache_path=registry_path)
+            registry.update(results)
+
+    background_tasks.add_task(_run_scan)
+
+    return {"status": "started", "message": "モデルスキャン開始"}

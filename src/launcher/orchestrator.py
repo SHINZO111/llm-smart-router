@@ -298,37 +298,48 @@ class LaunchOrchestrator:
         return False, f"LM Studio起動失敗 ({retry}回試行)"
 
     def _stage_model_detect(self) -> tuple:
-        """モデル検出ステージ"""
-        # LM Studioが起動していなければスキップ
-        if not self.lmstudio_launcher.is_api_ready():
-            return False, "LM Studio APIが応答していません"
+        """モデル検出ステージ（マルチランタイム対応）"""
+        import asyncio
 
-        # 既存の model_detector を再利用
         src_path = str(PROJECT_ROOT / "src")
         path_added = False
         if src_path not in sys.path:
             sys.path.insert(0, src_path)
             path_added = True
         try:
-            from lmstudio.model_detector import LMStudioModelDetector
+            from scanner.scanner import MultiRuntimeScanner
+            from scanner.registry import ModelRegistry
         except ImportError:
-            return False, "model_detector モジュールのインポートに失敗"
+            return False, "scanner モジュールのインポートに失敗"
         finally:
             if path_added and src_path in sys.path:
                 sys.path.remove(src_path)
 
-        detector = LMStudioModelDetector(endpoint=self.config.lmstudio_endpoint)
-        config_path = str(PROJECT_ROOT / "config.yaml")
+        timeout = self.config.model_detect_timeout
+        scanner = MultiRuntimeScanner(timeout=timeout)
 
-        result = detector.detect_and_update_config(config_path)
+        try:
+            loop = asyncio.new_event_loop()
+            try:
+                scan_results = loop.run_until_complete(scanner.scan_all())
+            finally:
+                loop.close()
+        except Exception as e:
+            logging.exception("スキャン中に例外発生")
+            return False, f"スキャンエラー: {type(e).__name__}"
 
-        if result["success"]:
-            model_name = result.get("default_model", "不明")
-            count = result.get("models_detected", 0)
-            return True, f"モデル検出完了: {model_name} ({count}個)"
+        registry = ModelRegistry(
+            cache_path=str(PROJECT_ROOT / "data" / "model_registry.json")
+        )
+        registry.update(scan_results)
+
+        total_models = registry.get_total_count()
+        runtime_count = len(scan_results)
+
+        if total_models > 0:
+            return True, f"{runtime_count}個のランタイムから{total_models}個のモデル検出"
         else:
-            errors = ", ".join(result.get("errors", ["不明なエラー"]))
-            return False, f"モデル検出失敗: {errors}"
+            return False, "モデルが検出されませんでした"
 
     def _stage_openclaw(self) -> tuple:
         """OpenClaw接続確認ステージ"""

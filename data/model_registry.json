@@ -1,0 +1,260 @@
+{
+  "last_scan": "2026-02-06T00:12:28.052210",
+  "cache_ttl": 300,
+  "models": {
+    "lmstudio:1234": [
+      {
+        "id": "qwen/qwen3-vl-8b",
+        "name": "qwen/qwen3-vl-8b",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: qwen/qwen3-vl-8b",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      },
+      {
+        "id": "essentialai/rnj-1",
+        "name": "essentialai/rnj-1",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: essentialai/rnj-1",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      },
+      {
+        "id": "qwen/qwen3-vl-4b",
+        "name": "qwen/qwen3-vl-4b",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: qwen/qwen3-vl-4b",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      },
+      {
+        "id": "deepseek/deepseek-r1-0528-qwen3-8b",
+        "name": "deepseek/deepseek-r1-0528-qwen3-8b",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: deepseek/deepseek-r1-0528-qwen3-8b",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      },
+      {
+        "id": "qwen/qwen3-4b-2507",
+        "name": "qwen/qwen3-4b-2507",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: qwen/qwen3-4b-2507",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      },
+      {
+        "id": "qwen/qwen3-4b-thinking-2507",
+        "name": "qwen/qwen3-4b-thinking-2507",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: qwen/qwen3-4b-thinking-2507",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      },
+      {
+        "id": "mistralai/ministral-3-3b",
+        "name": "mistralai/ministral-3-3b",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: mistralai/ministral-3-3b",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      },
+      {
+        "id": "liquid/lfm2.5-1.2b",
+        "name": "liquid/lfm2.5-1.2b",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: liquid/lfm2.5-1.2b",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      },
+      {
+        "id": "text-embedding-nomic-embed-text-v1.5",
+        "name": "text-embedding-nomic-embed-text-v1.5",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "lmstudio",
+          "endpoint": "http://localhost:1234/v1",
+          "port": 1234,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 281.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 9
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:1234/v1",
+        "description": "LM Studio: text-embedding-nomic-embed-text-v1.5",
+        "capabilities": [],
+        "owned_by": "organization_owner",
+        "size": null
+      }
+    ],
+    "llamacpp:8080": [
+      {
+        "id": "ByteDance-Seed_UI-TARS-1.5-7B-Q4_K_M.gguf",
+        "name": "ByteDance-Seed_UI-TARS-1.5-7B-Q4_K_M.gguf",
+        "source": "local_runtime",
+        "runtime": {
+          "runtime_type": "llamacpp",
+          "endpoint": "http://localhost:8080/v1",
+          "port": 8080,
+          "version": null,
+          "is_responding": true,
+          "response_time_ms": 265.0,
+          "detected_at": "2026-02-06T00:12:26.306861",
+          "metadata": {
+            "model_count": 1
+          }
+        },
+        "provider": null,
+        "api_key_env": null,
+        "api_key_present": false,
+        "endpoint": "http://localhost:8080/v1",
+        "description": "llama.cpp: ByteDance-Seed_UI-TARS-1.5-7B-Q4_K_M.gguf",
+        "capabilities": [],
+        "owned_by": "llamacpp",
+        "size": null
+      }
+    ]
+  }
+}

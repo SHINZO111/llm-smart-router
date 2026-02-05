@@ -7,14 +7,18 @@ APIキー管理、ルーター設定、プリセット編集
 
 import os
 import sys
+import json
+import tempfile
 from pathlib import Path
+from datetime import datetime
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
     QWidget, QFormLayout, QLineEdit, QPushButton,
     QLabel, QMessageBox, QGroupBox, QCheckBox,
     QSpinBox, QDoubleSpinBox, QTextEdit, QFileDialog,
-    QDialogButtonBox, QComboBox, QProgressBar
+    QDialogButtonBox, QComboBox, QProgressBar,
+    QListWidget, QListWidgetItem, QAbstractItemView
 )
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QFont
@@ -54,6 +58,9 @@ class SettingsDialog(QDialog):
         
         # プリセットタブ
         self.tabs.addTab(self.create_preset_tab(), "📋 プリセット")
+
+        # 優先順位タブ
+        self.tabs.addTab(self.create_priority_tab(), "📊 優先順位")
         
         # ボタンボックス
         buttons = QDialogButtonBox(
@@ -441,6 +448,237 @@ class SettingsDialog(QDialog):
         self.load_preset()
         QMessageBox.information(self, "リセット", "デフォルト設定に戻しました")
     
+    def _get_project_root(self):
+        """プロジェクトルートパスを取得"""
+        return Path(__file__).resolve().parent.parent.parent
+
+    def _get_priority_path(self):
+        """fallback_priority.json のパス"""
+        return self._get_project_root() / "data" / "fallback_priority.json"
+
+    def create_priority_tab(self):
+        """優先順位設定タブ"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        desc = QLabel(
+            "Autoモードでモデルが失敗した場合のフォールバック順序を設定します。\n"
+            "上から順に試行し、成功したらそのモデルの応答を返します。"
+        )
+        desc.setStyleSheet("color: #6366f1; padding: 10px;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        # リストウィジェット + ボタン
+        list_row = QHBoxLayout()
+
+        self.priority_list = QListWidget()
+        self.priority_list.setDragDropMode(QAbstractItemView.InternalMove)
+        self.priority_list.setDefaultDropAction(Qt.MoveAction)
+        self.priority_list.setStyleSheet(
+            "QListWidget { background: #1e1e2e; color: #cdd6f4; border: 1px solid #45475a;"
+            " border-radius: 6px; font-size: 13px; padding: 4px; }"
+            " QListWidget::item { padding: 6px 8px; border-radius: 4px; }"
+            " QListWidget::item:selected { background: #45475a; }"
+        )
+        list_row.addWidget(self.priority_list)
+
+        # 上/下/削除ボタン
+        btn_col = QVBoxLayout()
+        btn_col.addStretch()
+
+        up_btn = QPushButton("↑ 上へ")
+        up_btn.setFixedWidth(80)
+        up_btn.clicked.connect(self._priority_move_up)
+        btn_col.addWidget(up_btn)
+
+        down_btn = QPushButton("↓ 下へ")
+        down_btn.setFixedWidth(80)
+        down_btn.clicked.connect(self._priority_move_down)
+        btn_col.addWidget(down_btn)
+
+        btn_col.addSpacing(20)
+
+        reset_btn = QPushButton("🔄 リセット")
+        reset_btn.setFixedWidth(80)
+        reset_btn.clicked.connect(self._priority_reset)
+        btn_col.addWidget(reset_btn)
+
+        btn_col.addStretch()
+        list_row.addLayout(btn_col)
+
+        layout.addLayout(list_row)
+
+        # 現在の優先順位プレビュー
+        self.priority_preview = QLabel("")
+        self.priority_preview.setStyleSheet("color: #a6adc8; font-size: 12px; padding: 8px;")
+        self.priority_preview.setWordWrap(True)
+        layout.addWidget(self.priority_preview)
+        self.priority_list.model().rowsMoved.connect(self._update_priority_preview)
+
+        # 読み込み
+        self._load_priority_list()
+
+        return widget
+
+    def _load_priority_list(self):
+        """レジストリとfallback_priority.jsonから優先順位リストを構築"""
+        self.priority_list.clear()
+
+        # 現在の優先順位を読み込み
+        priority_path = self._get_priority_path()
+        current_priority = None
+        if priority_path.exists():
+            try:
+                data = json.loads(priority_path.read_text(encoding="utf-8"))
+                if isinstance(data.get("priority"), list):
+                    current_priority = data["priority"]
+            except (json.JSONDecodeError, OSError):
+                pass
+
+        # レジストリからモデル一覧を取得
+        available_models = self._get_available_model_refs()
+
+        if current_priority:
+            # 保存済み順序で表示し、新しいモデルは末尾に追加
+            seen = set()
+            for ref in current_priority:
+                self._add_priority_item(ref)
+                seen.add(ref)
+            for ref in available_models:
+                if ref not in seen:
+                    self._add_priority_item(ref)
+                    seen.add(ref)  # 追加したら必ずseenに記録
+        else:
+            # デフォルト: 全ローカルモデル → cloud（重複排除）
+            seen = set()
+            for ref in available_models:
+                if ref not in seen:
+                    self._add_priority_item(ref)
+                    seen.add(ref)
+
+        self._update_priority_preview()
+
+    def _get_available_model_refs(self):
+        """レジストリから利用可能なモデル参照リストを返す"""
+        refs = []
+        registry_path = self._get_project_root() / "data" / "model_registry.json"
+        if registry_path.exists():
+            try:
+                data = json.loads(registry_path.read_text(encoding="utf-8"))
+                models = data.get("models", {})
+                for key, model_list in models.items():
+                    if key == "cloud":
+                        continue
+                    if isinstance(model_list, list):
+                        for m in model_list:
+                            mid = m.get("id", "")
+                            if mid and not mid.startswith("text-embedding"):
+                                refs.append(f"local:{mid}")
+            except (json.JSONDecodeError, OSError):
+                pass
+        # cloudを末尾に追加
+        refs.append("cloud")
+        return refs
+
+    def _add_priority_item(self, model_ref):
+        """モデル参照をリストに追加"""
+        if model_ref.startswith("local:"):
+            model_id = model_ref[len("local:"):]
+            # 短い表示名
+            short = model_id.split("/")[-1] if "/" in model_id else model_id
+            display = f"💻 {short}  ({model_id})"
+        elif model_ref == "cloud":
+            display = "☁️ Claude API"
+        else:
+            display = model_ref
+
+        item = QListWidgetItem(display)
+        item.setData(Qt.UserRole, model_ref)
+        self.priority_list.addItem(item)
+
+    def _priority_move_up(self):
+        """選択項目を上に移動"""
+        row = self.priority_list.currentRow()
+        if row > 0:
+            item = self.priority_list.takeItem(row)
+            self.priority_list.insertItem(row - 1, item)
+            self.priority_list.setCurrentRow(row - 1)
+            self._update_priority_preview()
+
+    def _priority_move_down(self):
+        """選択項目を下に移動"""
+        row = self.priority_list.currentRow()
+        if row < self.priority_list.count() - 1:
+            item = self.priority_list.takeItem(row)
+            self.priority_list.insertItem(row + 1, item)
+            self.priority_list.setCurrentRow(row + 1)
+            self._update_priority_preview()
+
+    def _priority_reset(self):
+        """デフォルト順序にリセット"""
+        self._load_priority_list()
+
+    def _update_priority_preview(self):
+        """プレビューラベルを更新"""
+        refs = self._get_priority_order()
+        if not refs:
+            self.priority_preview.setText("")
+            return
+
+        names = []
+        for ref in refs:
+            if ref.startswith("local:"):
+                mid = ref[len("local:"):]
+                short = mid.split("/")[-1] if "/" in mid else mid
+                names.append(short)
+            elif ref == "cloud":
+                names.append("Claude")
+            else:
+                names.append(ref)
+        self.priority_preview.setText(f"フォールバック順: {' → '.join(names)}")
+
+    def _get_priority_order(self):
+        """リストウィジェットから優先順位のmodel_refリストを取得"""
+        refs = []
+        for i in range(self.priority_list.count()):
+            item = self.priority_list.item(i)
+            ref = item.data(Qt.UserRole)
+            if ref:
+                refs.append(ref)
+        return refs
+
+    def _save_priority(self):
+        """優先順位をfallback_priority.jsonに保存"""
+        refs = self._get_priority_order()
+        if not refs:
+            return
+
+        priority_path = self._get_priority_path()
+        data = {
+            "priority": refs,
+            "updated_at": datetime.now().isoformat()
+        }
+
+        # アトミック書き込み
+        try:
+            priority_path.parent.mkdir(parents=True, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=str(priority_path.parent), suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                os.replace(tmp_path, str(priority_path))
+            except BaseException:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                raise
+        except OSError as e:
+            QMessageBox.warning(self, "エラー", f"優先順位の保存に失敗: {e}")
+
     def save_settings(self):
         """設定を保存"""
         # APIキー保存
@@ -457,7 +695,10 @@ class SettingsDialog(QDialog):
         
         # デフォルトモデル保存
         self.settings.setValue('default_model', self.default_model.currentData())
-        
+
+        # 優先順位保存
+        self._save_priority()
+
         QMessageBox.information(self, "保存完了", "設定を保存しました")
         self.accept()
 
