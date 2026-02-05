@@ -11,7 +11,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from fastapi import APIRouter, HTTPException, Query, UploadFile, File, Form, BackgroundTasks
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, ConfigDict
 import logging
 import asyncio
 
@@ -667,3 +667,189 @@ async def trigger_model_scan(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_scan)
 
     return {"status": "started", "message": "モデルスキャン開始"}
+
+
+# ==================== Router Endpoints (OpenClaw Integration) ====================
+
+class RouterQueryRequest(BaseModel):
+    """ルーター実行リクエスト"""
+    model_config = ConfigDict(populate_by_name=True)  # Allow both snake_case and camelCase
+
+    input: str = Field(..., min_length=1, max_length=10000, description="クエリテキスト")
+    force_model: Optional[str] = Field(None, max_length=100, description="強制モデル指定 (local/cloud/local:model-id)", alias="forceModel")
+    context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="追加コンテキスト")
+
+    @field_validator('context')
+    @classmethod
+    def validate_context_size(cls, v):
+        """コンテキストサイズの検証"""
+        if v:
+            # キー数制限
+            if len(v) > 50:
+                raise ValueError('context has too many keys (max 50)')
+            # JSON サイズ制限（10KB）
+            try:
+                if len(json.dumps(v)) > 10000:
+                    raise ValueError('context too large (max 10KB)')
+            except (TypeError, ValueError) as e:
+                raise ValueError(f'context serialization failed: {e}')
+        return v or {}
+
+
+class RouterQueryResponse(BaseModel):
+    """ルーター実行レスポンス"""
+    success: bool
+    model: Optional[str] = None
+    response: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+@router.post("/router/query", response_model=RouterQueryResponse)
+@_handle_errors
+async def execute_router_query(request: RouterQueryRequest):
+    """
+    OpenClawから呼び出されるルーター実行エンドポイント
+
+    router.jsを呼び出してクエリをルーティング・実行する
+    """
+    import subprocess
+    import tempfile
+    import os
+    import hashlib
+
+    # router.jsのパスを取得
+    router_js_path = project_root.parent / "router.js"
+    if not router_js_path.exists():
+        raise HTTPException(status_code=500, detail="router.js not found")
+
+    # セキュリティ: router.jsの整合性検証（ファイルサイズの異常チェック）
+    router_stat = router_js_path.stat()
+    if router_stat.st_size > 5_000_000:  # 5MB以上は異常
+        logger.error("router.jsのファイルサイズが異常")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+    input_file = None
+    try:
+        # 入力データをJSON形式で準備
+        input_data = {
+            "input": request.input,
+            "forceModel": request.force_model,
+            "context": request.context or {}
+        }
+
+        # 一時ファイルに入力を保存（delete=Falseで明示的に管理）
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False, encoding='utf-8') as f:
+            json.dump(input_data, f)
+            input_file = f.name
+
+        # router.jsを実行（タイムアウト30秒に短縮）
+        result = subprocess.run(
+            ['node', str(router_js_path), '--api-mode', input_file],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            encoding='utf-8'
+        )
+
+        if result.returncode != 0:
+            # エラーメッセージからパス情報を除去
+            error_msg = result.stderr[:200].replace(str(project_root.parent), '[PROJECT_ROOT]')
+            logger.error(f"router.js実行エラー（コード: {result.returncode}）")
+            return RouterQueryResponse(
+                success=False,
+                error=f"Routing failed"
+            )
+
+        # 結果をパース
+        try:
+            response_data = json.loads(result.stdout)
+            return RouterQueryResponse(
+                success=True,
+                model=response_data.get("model"),
+                response=response_data.get("response"),
+                metadata=response_data.get("metadata")
+            )
+        except json.JSONDecodeError:
+            logger.error("router.js出力パース失敗（JSON形式不正）")
+            return RouterQueryResponse(
+                success=False,
+                error="Failed to parse router response"
+            )
+
+    except subprocess.TimeoutExpired:
+        logger.error("router.js実行タイムアウト（30秒）")
+        return RouterQueryResponse(
+            success=False,
+            error="Query execution timed out"
+        )
+    except Exception as e:
+        logger.error(f"Router query実行エラー（型: {type(e).__name__}）")
+        raise HTTPException(status_code=500, detail="Internal server error")
+    finally:
+        # 一時ファイル削除（すべてのエラーパスで確実に実行）
+        if input_file:
+            try:
+                os.unlink(input_file)
+            except OSError:
+                pass
+
+
+@router.get("/router/stats")
+@_handle_errors
+async def get_router_stats():
+    """
+    ルーター統計を取得
+
+    router.jsの統計情報を返す（レジストリとフォールバック優先順位）
+    """
+    from scanner.registry import ModelRegistry
+
+    # レジストリ統計
+    registry_path = str(project_root.parent / "data" / "model_registry.json")
+    registry = ModelRegistry(cache_path=registry_path)
+
+    # フォールバック優先順位
+    fallback_path = project_root.parent / "data" / "fallback_priority.json"
+    fallback_priority = []
+    if fallback_path.exists():
+        try:
+            with open(fallback_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                fallback_priority = data.get("priority", [])
+        except Exception as e:
+            logger.warning(f"フォールバック優先順位読み込み失敗: {e}")
+
+    return {
+        "models": {
+            "local_count": len(registry.get_local_models()),
+            "cloud_count": len(registry.get_cloud_models()),
+            "total_count": registry.get_total_count(),
+            "last_scan": registry.last_scan_iso,
+            "cache_valid": registry.is_cache_valid()
+        },
+        "fallback_priority": fallback_priority,
+        "conversations": conversation_manager.get_stats()
+    }
+
+
+@router.post("/router/config/reload")
+@_handle_errors
+async def reload_router_config():
+    """
+    ルーター設定をリロード
+
+    config.yamlとレジストリを再読み込み
+    """
+    from scanner.registry import ModelRegistry
+
+    # レジストリリロード
+    registry_path = str(project_root.parent / "data" / "model_registry.json")
+    registry = ModelRegistry(cache_path=registry_path)
+    registry._load_cache()
+
+    return {
+        "success": True,
+        "message": "設定をリロードしました",
+        "models_loaded": registry.get_total_count()
+    }

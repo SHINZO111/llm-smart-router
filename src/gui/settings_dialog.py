@@ -61,7 +61,10 @@ class SettingsDialog(QDialog):
 
         # 優先順位タブ
         self.tabs.addTab(self.create_priority_tab(), "📊 優先順位")
-        
+
+        # OpenClaw連携タブ
+        self.tabs.addTab(self.create_openclaw_tab(), "🔗 OpenClaw")
+
         # ボタンボックス
         buttons = QDialogButtonBox(
             QDialogButtonBox.Save | QDialogButtonBox.Cancel
@@ -679,6 +682,220 @@ class SettingsDialog(QDialog):
         except OSError as e:
             QMessageBox.warning(self, "エラー", f"優先順位の保存に失敗: {e}")
 
+    def create_openclaw_tab(self):
+        """OpenClaw連携タブ"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        desc = QLabel(
+            "OpenClawとの連携設定。検出されたローカルモデルをOpenClawの設定に自動同期できます。"
+        )
+        desc.setStyleSheet("color: #6366f1; padding: 10px;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        # 自動同期設定
+        sync_group = QGroupBox("自動同期設定")
+        sync_layout = QVBoxLayout(sync_group)
+
+        self.openclaw_auto_sync = QCheckBox("モデルスキャン後に自動同期する")
+        self.openclaw_auto_sync.setToolTip(
+            "有効にすると、モデルスキャン完了時に自動的にOpenClawの設定を更新します"
+        )
+        sync_layout.addWidget(self.openclaw_auto_sync)
+
+        self.openclaw_fallback_sync = QCheckBox("フォールバック時に同期する（Node.js）")
+        self.openclaw_fallback_sync.setToolTip(
+            "有効にすると、router.jsでモデルフォールバック時にOpenClaw設定も更新します\n"
+            "（環境変数OPENCLAW_AUTO_SYNC=trueを.envに追加する必要があります）"
+        )
+        sync_layout.addWidget(self.openclaw_fallback_sync)
+
+        layout.addWidget(sync_group)
+
+        # 設定ファイルパス
+        path_group = QGroupBox("設定ファイル")
+        path_layout = QFormLayout(path_group)
+
+        self.openclaw_config_path = QLineEdit()
+        self.openclaw_config_path.setPlaceholderText("自動検出（~/.openclaw/config.json）")
+        path_layout.addRow("設定ファイルパス:", self.openclaw_config_path)
+
+        detect_btn = QPushButton("📂 検出")
+        detect_btn.setFixedWidth(100)
+        detect_btn.clicked.connect(self._detect_openclaw_config)
+        path_layout.addRow("", detect_btn)
+
+        layout.addWidget(path_group)
+
+        # 手動同期ボタン
+        action_group = QGroupBox("手動操作")
+        action_layout = QVBoxLayout(action_group)
+
+        sync_now_btn = QPushButton("🔄 今すぐ同期")
+        sync_now_btn.setToolTip("現在検出されているモデルをOpenClawに同期します")
+        sync_now_btn.clicked.connect(self._sync_openclaw_now)
+        action_layout.addWidget(sync_now_btn)
+
+        create_config_btn = QPushButton("📝 デフォルト設定作成")
+        create_config_btn.setToolTip("OpenClawのデフォルト設定ファイルを作成します")
+        create_config_btn.clicked.connect(self._create_openclaw_config)
+        action_layout.addWidget(create_config_btn)
+
+        layout.addWidget(action_group)
+
+        # ステータス表示
+        self.openclaw_status = QLabel("")
+        self.openclaw_status.setStyleSheet("color: #a6adc8; padding: 10px;")
+        self.openclaw_status.setWordWrap(True)
+        layout.addWidget(self.openclaw_status)
+
+        layout.addStretch()
+
+        # 設定を読み込み
+        self._load_openclaw_settings()
+
+        return widget
+
+    def _load_openclaw_settings(self):
+        """OpenClaw設定を読み込み"""
+        auto_sync = self.settings.value('openclaw/auto_sync', False, type=bool)
+        fallback_sync = self.settings.value('openclaw/fallback_sync', False, type=bool)
+        config_path = self.settings.value('openclaw/config_path', '')
+
+        self.openclaw_auto_sync.setChecked(auto_sync)
+        self.openclaw_fallback_sync.setChecked(fallback_sync)
+        self.openclaw_config_path.setText(config_path)
+
+        self._check_openclaw_status()
+
+    def _check_openclaw_status(self):
+        """OpenClaw設定の状態をチェック"""
+        try:
+            from openclaw.config_manager import OpenClawConfigManager
+
+            custom_path = self.openclaw_config_path.text().strip()
+            manager = OpenClawConfigManager(
+                config_path=custom_path if custom_path else None
+            )
+
+            if manager.exists():
+                llm_config = manager.get_current_llm()
+                model = llm_config.get('model', '不明')
+                endpoint = llm_config.get('endpoint', '不明')
+                self.openclaw_status.setText(
+                    f"✅ OpenClaw設定検出\n"
+                    f"設定ファイル: {manager.config_path}\n"
+                    f"現在のモデル: {model}\n"
+                    f"エンドポイント: {endpoint}"
+                )
+            else:
+                self.openclaw_status.setText(
+                    "⚠️ OpenClaw設定ファイルが見つかりません\n"
+                    "「デフォルト設定作成」ボタンで作成できます"
+                )
+        except ImportError:
+            self.openclaw_status.setText(
+                "❌ OpenClawモジュールが利用できません"
+            )
+        except Exception as e:
+            self.openclaw_status.setText(f"エラー: {e}")
+
+    def _detect_openclaw_config(self):
+        """OpenClaw設定ファイルを自動検出"""
+        try:
+            from openclaw.config_manager import OpenClawConfigManager
+
+            manager = OpenClawConfigManager()
+            if manager.config_path:
+                self.openclaw_config_path.setText(str(manager.config_path))
+                self._check_openclaw_status()
+                QMessageBox.information(
+                    self, "検出成功",
+                    f"OpenClaw設定ファイルを検出しました:\n{manager.config_path}"
+                )
+            else:
+                QMessageBox.warning(
+                    self, "検出失敗",
+                    "OpenClaw設定ファイルが見つかりませんでした"
+                )
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"検出中にエラーが発生しました:\n{e}")
+
+    def _sync_openclaw_now(self):
+        """OpenClawに今すぐ同期"""
+        try:
+            from scanner.registry import ModelRegistry
+            from openclaw.config_manager import OpenClawConfigManager
+
+            project_root = self._get_project_root()
+            registry = ModelRegistry(
+                cache_path=str(project_root / "data" / "model_registry.json")
+            )
+
+            local_models = registry.get_local_models()
+            if not local_models:
+                QMessageBox.warning(
+                    self, "同期失敗",
+                    "ローカルモデルが検出されていません。\n先にモデルスキャンを実行してください。"
+                )
+                return
+
+            custom_path = self.openclaw_config_path.text().strip()
+            manager = OpenClawConfigManager(
+                config_path=custom_path if custom_path else None
+            )
+
+            if not manager.exists():
+                reply = QMessageBox.question(
+                    self, "設定ファイル未検出",
+                    "OpenClaw設定ファイルが見つかりません。\n"
+                    "デフォルト設定を作成しますか？",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    manager.create_default_config()
+                else:
+                    return
+
+            # モデル情報を同期
+            models_dict = [m.to_dict() for m in local_models]
+            manager.update_available_models(models_dict)
+
+            # 第1優先モデルを設定
+            first_model = local_models[0]
+            endpoint = first_model.runtime.endpoint if first_model.runtime else "http://localhost:1234/v1"
+            manager.update_llm_endpoint(endpoint, first_model.id)
+
+            self._check_openclaw_status()
+            QMessageBox.information(
+                self, "同期完了",
+                f"OpenClawにモデル情報を同期しました。\n\n"
+                f"デフォルトモデル: {first_model.id}\n"
+                f"登録モデル数: {len(local_models)}"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "同期エラー", f"同期中にエラーが発生しました:\n{e}")
+
+    def _create_openclaw_config(self):
+        """OpenClawデフォルト設定を作成"""
+        try:
+            from openclaw.config_manager import OpenClawConfigManager
+
+            manager = OpenClawConfigManager()
+            if manager.create_default_config():
+                self.openclaw_config_path.setText(str(manager.config_path))
+                self._check_openclaw_status()
+                QMessageBox.information(
+                    self, "作成完了",
+                    f"OpenClawデフォルト設定を作成しました:\n{manager.config_path}"
+                )
+            else:
+                QMessageBox.warning(self, "作成失敗", "設定ファイルの作成に失敗しました")
+        except Exception as e:
+            QMessageBox.critical(self, "エラー", f"作成中にエラーが発生しました:\n{e}")
+
     def save_settings(self):
         """設定を保存"""
         # APIキー保存
@@ -698,6 +915,11 @@ class SettingsDialog(QDialog):
 
         # 優先順位保存
         self._save_priority()
+
+        # OpenClaw連携設定保存
+        self.settings.setValue('openclaw/auto_sync', self.openclaw_auto_sync.isChecked())
+        self.settings.setValue('openclaw/fallback_sync', self.openclaw_fallback_sync.isChecked())
+        self.settings.setValue('openclaw/config_path', self.openclaw_config_path.text())
 
         QMessageBox.information(self, "保存完了", "設定を保存しました")
         self.accept()

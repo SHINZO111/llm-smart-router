@@ -40,13 +40,23 @@ class ModelRegistry:
         self._last_scan: Optional[datetime] = None
         self._load_cache()
 
-    def update(self, scan_results: Dict[str, List[DiscoveredModel]]) -> None:
-        """スキャン結果でレジストリを更新"""
+    def update(self, scan_results: Dict[str, List[DiscoveredModel]], sync_openclaw: bool = False) -> None:
+        """
+        スキャン結果でレジストリを更新
+
+        Args:
+            scan_results: スキャン結果
+            sync_openclaw: OpenClaw設定を同期するか（デフォルト: False）
+        """
         self._models = scan_results
         self._last_scan = datetime.now()
         self._save_cache()
         total = self.get_total_count()
         logger.info(f"レジストリ更新: {total}モデル")
+
+        # OpenClaw同期（オプション）
+        if sync_openclaw:
+            self._sync_to_openclaw()
 
     def get_all_models(self) -> Dict[str, List[DiscoveredModel]]:
         """全モデルをグループ別に返す"""
@@ -167,3 +177,44 @@ class ModelRegistry:
             logger.info(f"レジストリ読込: {self.get_total_count()}モデル (from {self.cache_path})")
         except (json.JSONDecodeError, OSError) as e:
             logger.warning(f"レジストリ読込失敗: {e}")
+
+    def _sync_to_openclaw(self) -> None:
+        """検出されたモデルをOpenClaw設定に同期"""
+        try:
+            import sys
+            from pathlib import Path
+            # openclaw パッケージをインポート
+            openclaw_path = Path(__file__).parent.parent / "openclaw"
+            if str(openclaw_path) not in sys.path:
+                sys.path.insert(0, str(openclaw_path.parent))
+
+            from openclaw.config_manager import OpenClawConfigManager
+
+            manager = OpenClawConfigManager()
+            if not manager.exists():
+                logger.info("OpenClaw設定ファイルが存在しないため、同期をスキップ")
+                return
+
+            # ローカルモデルを取得
+            local_models = self.get_local_models()
+            if not local_models:
+                logger.info("ローカルモデルが検出されていないため、OpenClaw同期をスキップ")
+                return
+
+            # モデル情報を辞書に変換
+            models_dict = [m.to_dict() for m in local_models]
+
+            # OpenClaw設定を更新
+            if manager.update_available_models(models_dict):
+                # 第1優先のローカルモデルをデフォルトに設定
+                first_model = local_models[0]
+                endpoint = first_model.runtime.endpoint if first_model.runtime else "http://localhost:1234/v1"
+                manager.update_llm_endpoint(endpoint, first_model.id)
+                logger.info(f"✅ OpenClaw設定同期完了: {first_model.id}")
+            else:
+                logger.warning("OpenClaw設定の更新に失敗")
+
+        except ImportError as e:
+            logger.debug(f"OpenClaw同期モジュールのインポート失敗: {e}")
+        except Exception as e:
+            logger.warning(f"OpenClaw同期エラー: {e}")

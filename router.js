@@ -453,6 +453,11 @@ class LLMRouter {
         }
         console.log(`${'─'.repeat(60)}\n`);
 
+        // OpenClaw自動同期（環境変数で有効化）
+        if (process.env.OPENCLAW_AUTO_SYNC === 'true' && result.modelType === 'local') {
+          this._syncToOpenClaw(result.modelName, modelRef);
+        }
+
         return {
           model: result.modelType,
           modelName: result.modelName || result.modelType,
@@ -1150,6 +1155,38 @@ class LLMRouter {
   /**
    * 統計表示
    */
+  /**
+   * OpenClaw設定を同期
+   * @private
+   */
+  _syncToOpenClaw(modelName, modelRef) {
+    try {
+      // レジストリから該当モデルを検索
+      const availableLocal = this.getAvailableLocalModels();
+      const model = availableLocal.find(m => m.id === modelName || modelRef.includes(m.id));
+
+      if (!model) {
+        console.warn(`⚠️  OpenClaw同期: モデル "${modelName}" がレジストリに見つかりません`);
+        return;
+      }
+
+      const endpoint = model.endpoint || 'http://localhost:1234/v1';
+
+      // openclaw-integration経由で設定更新
+      import('./openclaw-integration.js').then(module => {
+        const integration = new module.default();
+        const result = integration.updateOpenClawLLM(endpoint, model.id);
+        if (result.success) {
+          console.log(`✅ OpenClaw設定同期: ${model.id}`);
+        }
+      }).catch(err => {
+        console.debug(`OpenClaw同期失敗: ${err.message}`);
+      });
+    } catch (error) {
+      console.debug(`OpenClaw同期エラー: ${error.message}`);
+    }
+  }
+
   showStats() {
     console.log(`\n${'='.repeat(60)}`);
     console.log(`📊 統計情報`);
@@ -1171,14 +1208,93 @@ export default LLMRouter;
 const __filename = fileURLToPath(import.meta.url);
 if (process.argv[1] && path.resolve(__filename) === path.resolve(process.argv[1])) {
   const router = new LLMRouter();
-  
+
   // コマンドライン引数の解析
   const args = process.argv.slice(2);
+
+  // API モード: OpenClaw連携用のJSON入出力モード
+  if (args[0] === '--api-mode' && args[1]) {
+    const inputFile = args[1];
+
+    // セキュリティ: 入力ファイルパスの検証（一時ディレクトリのみ許可）
+    const isValidTempPath = inputFile.includes(os.tmpdir()) ||
+                            inputFile.includes('\\Temp\\') ||
+                            inputFile.includes('/tmp/');
+
+    if (!isValidTempPath || inputFile.length > 500) {
+      console.error(JSON.stringify({ success: false, error: 'Invalid input file path' }));
+      process.exit(1);
+      return;
+    }
+
+    fs.readFile(inputFile, 'utf8', (err, data) => {
+      if (err) {
+        console.error(JSON.stringify({ success: false, error: 'Failed to read input file' }));
+        process.exit(1);
+        return;
+      }
+
+      let inputData;
+      try {
+        inputData = JSON.parse(data);
+      } catch (e) {
+        console.error(JSON.stringify({ success: false, error: 'Invalid JSON input' }));
+        process.exit(1);
+        return;
+      }
+
+      const { input, forceModel, context } = inputData;
+
+      if (!input) {
+        console.error(JSON.stringify({ success: false, error: 'Missing input field' }));
+        process.exit(1);
+        return;
+      }
+
+      // フォールバック優先順位を考慮してルーティング
+      const options = context || {};
+
+      let routePromise;
+      if (forceModel) {
+        // 特定モデル指定
+        if (forceModel.startsWith('local:')) {
+          const modelId = forceModel.slice(6);
+          routePromise = router.executeLocal(input, modelId);
+        } else {
+          routePromise = router.executeWithModel(forceModel, input, { reason: 'API指定' });
+        }
+      } else {
+        // 自動判定（フォールバックチェーン適用）
+        routePromise = router.route(input, options);
+      }
+
+      routePromise.then(result => {
+        // JSON形式で出力
+        console.log(JSON.stringify({
+          success: true,
+          model: result.model,
+          response: result.response,
+          metadata: result.metadata
+        }));
+        process.exit(0);
+      }).catch(error => {
+        console.error(JSON.stringify({
+          success: false,
+          error: error.message || 'Unknown error'
+        }));
+        process.exit(1);
+      });
+    });
+
+    return; // API モード終了
+  }
+
+  // 通常のCLIモード
   let input = '';
   let imagePath = null;
   let imageBase64 = null;
   let modelType = null;
-  
+
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--image' && i + 1 < args.length) {
       imagePath = args[i + 1];
@@ -1193,22 +1309,24 @@ if (process.argv[1] && path.resolve(__filename) === path.resolve(process.argv[1]
       input = args[i];
     }
   }
-  
+
   if (!input && !imagePath && !imageBase64) {
     console.log('Usage: node router.js <your question> [--image <path>] [--model <model>]');
+    console.log('       node router.js --api-mode <input.json>  (OpenClaw連携モード)');
     console.log('');
     console.log('Options:');
-    console.log('  --image <path>   Image file path');
-    console.log('  --base64 <data>  Base64 encoded image');
-    console.log('  --model <model>  Model type (auto/local/cloud/local:<model-id>)');
+    console.log('  --image <path>     Image file path');
+    console.log('  --base64 <data>    Base64 encoded image');
+    console.log('  --model <model>    Model type (auto/local/cloud/local:<model-id>)');
+    console.log('  --api-mode <file>  API mode (JSON input/output for OpenClaw)');
     process.exit(1);
   }
-  
+
   const options = {};
   if (imagePath) options.imagePath = imagePath;
   if (imageBase64) options.imageBase64 = imageBase64;
   if (modelType) options.modelType = modelType;
-  
+
   router.route(input, options).then(result => {
     console.log('\n📄 応答:\n');
     console.log(result.response);
