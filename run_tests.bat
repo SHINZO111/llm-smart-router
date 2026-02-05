@@ -11,15 +11,15 @@ if errorlevel 1 (
 
 REM Run all tests
 echo Running API tests...
-python -m pytest src/tests/test_api.py -v
+python -m pytest tests/test_api.py -v
 
 echo.
 echo Running CLI tests...
-python -m pytest src/tests/test_cli.py -v
+python -m pytest tests/test_cli.py -v
 
 echo.
 echo Running integration tests...
-python -m pytest src/tests/test_integration.py -v
+python -m pytest tests/test_integration.py -v
 
 echo.
 echo All tests completed!

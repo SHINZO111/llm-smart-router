@@ -4,7 +4,7 @@ echo ============================================
 echo LLM Smart Router - Setup & Test
 echo ============================================
 
-cd /d "F:\llm-smart-router"
+cd /d "%~dp0"
 
 REM Check if virtual environment exists
 if not exist "venv" (
