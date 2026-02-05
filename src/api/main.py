@@ -6,6 +6,7 @@ LLM Smart Router - Conversation History API Server
 import os
 import sys
 import logging
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 # Add project root to path
@@ -19,6 +20,40 @@ from contextlib import asynccontextmanager
 
 from api.routes import router
 
+# ログローテーション設定
+def setup_logging():
+    """ログローテーションを設定（最大50MB: 10MB×5ファイル）"""
+    log_dir = project_root.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "api_server.log"
+
+    # RotatingFileHandler: 10MB毎にローテーション、最大5ファイル保持
+    handler = RotatingFileHandler(
+        log_file,
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+
+    # ルートロガーに追加
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(handler)
+
+    # コンソール出力も追加
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+# ロギング初期化
+setup_logging()
 logger = logging.getLogger(__name__)
 
 

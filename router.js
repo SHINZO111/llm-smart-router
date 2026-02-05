@@ -434,6 +434,11 @@ class LLMRouter {
         const cost = this.calculateCost(result, result.modelType);
         this.stats.total_cost += cost.total;
 
+        // 課金警告チェック: ローカル→クラウドのフォールバック
+        const isCostWarning = i > 0 &&
+          (tryOrder[0].startsWith('local') || tryOrder[0] === 'local') &&
+          (modelRef === 'cloud' || modelRef === 'claude');
+
         // 成功ログ
         console.log(`\n${'─'.repeat(60)}`);
         console.log(`✅ 完了 (${modelRef})`);
@@ -442,6 +447,9 @@ class LLMRouter {
         console.log(`💰 コスト: ¥${cost.total.toFixed(2)}`);
         if (i > 0) {
           console.log(`🔄 フォールバック #${i} で成功`);
+          if (isCostWarning) {
+            console.warn(`⚠️  課金警告: ローカルLLM失敗によりクラウドAPIを使用しました（¥${cost.total.toFixed(2)}）`);
+          }
         }
         console.log(`${'─'.repeat(60)}\n`);
 
@@ -456,7 +464,11 @@ class LLMRouter {
             context,
             fallbackUsed: i > 0,
             fallbackLevel: i,
-            modelRef
+            modelRef,
+            costWarning: isCostWarning,
+            costWarningMessage: isCostWarning
+              ? `ローカルLLMが利用できなかったため、クラウドAPI（¥${cost.total.toFixed(2)}）を使用しました`
+              : null
           }
         };
       } catch (error) {

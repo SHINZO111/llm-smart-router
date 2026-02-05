@@ -14,6 +14,8 @@ import subprocess
 import base64
 import yaml
 import uuid
+import logging
+from logging.handlers import RotatingFileHandler
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List
@@ -904,6 +906,39 @@ class ConversationManager:
 
 
 # ============================================================
+# Logging Setup
+# ============================================================
+
+def setup_gui_logging():
+    """GUIアプリケーションのログローテーション設定（最大50MB: 10MB×5ファイル）"""
+    project_root = Path(__file__).parent.parent.parent
+    log_dir = project_root / "logs"
+    log_dir.mkdir(exist_ok=True)
+    log_file = log_dir / "gui.log"
+
+    # RotatingFileHandler: 10MB毎にローテーション、最大5ファイル保持
+    handler = RotatingFileHandler(
+        log_file,
+        maxBytes=10 * 1024 * 1024,  # 10MB
+        backupCount=5,
+        encoding='utf-8'
+    )
+    handler.setLevel(logging.INFO)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    handler.setFormatter(formatter)
+
+    # ルートロガーに追加
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    # 既存のハンドラーをクリア（重複防止）
+    root_logger.handlers.clear()
+    root_logger.addHandler(handler)
+
+
+# ============================================================
 # Main Window
 # ============================================================
 
@@ -920,6 +955,9 @@ class MainWindow(QMainWindow):
             'requests': 0, 'local': 0, 'cloud': 0,
             'tokens_in': 0, 'tokens_out': 0, 'cost': 0.0
         }
+        # リクエストキュー（並列リクエスト処理用）
+        from collections import deque
+        self.request_queue = deque()
         
         # 会話管理
         self.conv_manager = ConversationManager()
@@ -933,7 +971,8 @@ class MainWindow(QMainWindow):
         self._init_shortcuts()
         self._init_timers()
         QTimer.singleShot(500, self.check_api_key)
-        
+        QTimer.singleShot(1000, self._check_registry_freshness)  # レジストリ鮮度チェック
+
         # 初期会話を作成
         self._create_new_conversation()
 
@@ -1610,9 +1649,30 @@ class MainWindow(QMainWindow):
     def execute(self):
         text = self.input_text.toPlainText().strip()
         has_image = self.image_handler.has_image()
-        
+
         if not text and not has_image:
             QMessageBox.warning(self, "Error", "Input is empty")
+            return
+
+        # 既にリクエスト実行中ならキューに追加
+        if self.worker and self.worker.isRunning():
+            pid = self.preset_combo.currentData()
+            model = self.model_combo.currentData()
+            if has_image:
+                model = 'claude'
+            image_base64 = None
+            if has_image:
+                image_base64, _ = self.image_handler.to_base64()
+
+            self.request_queue.append({
+                'text': text,
+                'model': model,
+                'preset_id': pid,
+                'image_base64': image_base64,
+                'has_image': has_image
+            })
+            queue_len = len(self.request_queue)
+            self.status_bar.showMessage(f"⏳ リクエストをキューに追加（待機中: {queue_len}）", 3000)
             return
 
         pid = self.preset_combo.currentData()
@@ -1669,7 +1729,7 @@ class MainWindow(QMainWindow):
     def _on_finished(self, result):
         # 現在の会話IDを取得
         current_id = self.conv_manager.current_conversation_id
-        
+
         # 会話タイトルを自動生成（初回メッセージの場合）
         if current_id:
             conv = self.conv_manager.get_conversation(current_id)
@@ -1679,17 +1739,31 @@ class MainWindow(QMainWindow):
                 if input_text:
                     auto_title = input_text + ("..." if len(input_text) >= 30 else "")
                     self._on_conversation_rename(current_id, auto_title)
-            
+
             self.conversation_tabs.set_tab_loading(current_id, False)
-        
+
+        # 課金警告チェック
+        metadata = result.get('metadata', {})
+        if metadata.get('costWarning'):
+            cost_msg = metadata.get('costWarningMessage', 'クラウドAPIを使用しました')
+            QMessageBox.warning(
+                self,
+                "💰 課金警告",
+                f"⚠️  {cost_msg}\n\n"
+                f"ローカルLLMが利用できなかったため、有料のクラウドAPIにフォールバックしました。\n"
+                f"継続して使用する場合は課金が発生します。"
+            )
+
         self._update_stats(result)
         self._reset_ui()
+        self._process_next_queued_request()
 
     def _on_error(self, msg):
         current_id = self.conv_manager.current_conversation_id
         if current_id:
             self.conversation_tabs.set_tab_loading(current_id, False)
         self._reset_ui()
+        self._process_next_queued_request()
 
     def _on_progress(self, msg):
         self.status_bar.showMessage(msg)
@@ -1700,6 +1774,51 @@ class MainWindow(QMainWindow):
         self.stop_btn.setVisible(False)
         self.progress.setVisible(False)
         self.status_bar.showMessage("Ready")
+
+    def _process_next_queued_request(self):
+        """キューから次のリクエストを取り出して実行"""
+        if not self.request_queue:
+            return
+
+        next_req = self.request_queue.popleft()
+        queue_len = len(self.request_queue)
+        self.status_bar.showMessage(
+            f"⏳ キューから次のリクエストを実行中（残り: {queue_len}）", 3000
+        )
+
+        # 入力フィールドを次のリクエストの内容で更新
+        self.input_text.setPlainText(next_req['text'])
+
+        # 画像がある場合は復元（現在はbase64のみ保存）
+        if next_req['has_image'] and next_req['image_base64']:
+            # 画像復元は省略（複雑なため、テキストのみキュー処理）
+            pass
+
+        # リクエスト実行
+        self.execute_btn.setVisible(False)
+        self.stop_btn.setVisible(True)
+        self.progress.setVisible(True)
+        self.progress.setRange(0, 0)
+        self.execute_btn.start_pulse()
+
+        current_id = self.conv_manager.current_conversation_id
+        if current_id:
+            self.conv_manager.update_conversation(
+                current_id,
+                message_count=self.conv_manager.get_conversation(current_id).message_count + 1
+            )
+            self.conversation_tabs.set_tab_loading(current_id, True)
+
+        self.worker = LLMWorker(
+            self.router_path,
+            next_req['text'],
+            None if next_req['model'] == "auto" else next_req['model'],
+            config={'timeout': 120, 'image_base64': next_req['image_base64']}
+        )
+        self.worker.finished.connect(self._on_finished)
+        self.worker.error.connect(self._on_error)
+        self.worker.progress.connect(self._on_progress)
+        self.worker.start()
 
     def _update_stats(self, result):
         self.session_stats['requests'] += 1
@@ -1720,6 +1839,31 @@ class MainWindow(QMainWindow):
                 QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
                 self.open_settings()
+
+    def _check_registry_freshness(self):
+        """起動時にモデルレジストリの鮮度をチェックし、古ければスキャンを提案"""
+        try:
+            import scanner.registry as _rg
+            project_root = Path(__file__).parent.parent.parent
+            registry = _rg.ModelRegistry(
+                cache_path=str(project_root / "data" / "model_registry.json")
+            )
+
+            if not registry.is_cache_valid():
+                reply = QMessageBox.question(
+                    self,
+                    "🔄 モデルスキャン推奨",
+                    "モデルレジストリのキャッシュが古くなっています（5分以上経過）。\n\n"
+                    "最新のローカルLLMランタイムをスキャンしますか？\n"
+                    "（スキャンには数秒かかります）",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    self._refresh_models()
+        except ImportError:
+            pass  # scanner パッケージ未インストール時は無視
+        except Exception as e:
+            logging.getLogger(__name__).debug(f"レジストリチェック失敗: {e}")
 
     def open_settings(self):
         SettingsDialog(self).exec()
@@ -1792,6 +1936,7 @@ class MainWindow(QMainWindow):
 # ============================================================
 
 def main():
+    setup_gui_logging()  # ログローテーション設定
     app = QApplication(sys.argv)
     DarkTheme.apply(app)
     w = MainWindow()
