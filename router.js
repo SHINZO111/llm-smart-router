@@ -11,6 +11,7 @@ import axios from 'axios';
 import Anthropic from '@anthropic-ai/sdk';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import os from 'os';
 import { spawn } from 'child_process';
 
 /**
@@ -1224,14 +1225,12 @@ if (process.argv[1] && path.resolve(__filename) === path.resolve(process.argv[1]
     if (!isValidTempPath || inputFile.length > 500) {
       console.error(JSON.stringify({ success: false, error: 'Invalid input file path' }));
       process.exit(1);
-      return;
     }
 
     fs.readFile(inputFile, 'utf8', (err, data) => {
       if (err) {
         console.error(JSON.stringify({ success: false, error: 'Failed to read input file' }));
         process.exit(1);
-        return;
       }
 
       let inputData;
@@ -1285,12 +1284,9 @@ if (process.argv[1] && path.resolve(__filename) === path.resolve(process.argv[1]
         process.exit(1);
       });
     });
-
-    return; // API モード終了
-  }
-
-  // 通常のCLIモード
-  let input = '';
+  } else {
+    // 通常のCLIモード
+    let input = '';
   let imagePath = null;
   let imageBase64 = null;
   let modelType = null;
@@ -1310,30 +1306,31 @@ if (process.argv[1] && path.resolve(__filename) === path.resolve(process.argv[1]
     }
   }
 
-  if (!input && !imagePath && !imageBase64) {
-    console.log('Usage: node router.js <your question> [--image <path>] [--model <model>]');
-    console.log('       node router.js --api-mode <input.json>  (OpenClaw連携モード)');
-    console.log('');
-    console.log('Options:');
-    console.log('  --image <path>     Image file path');
-    console.log('  --base64 <data>    Base64 encoded image');
-    console.log('  --model <model>    Model type (auto/local/cloud/local:<model-id>)');
-    console.log('  --api-mode <file>  API mode (JSON input/output for OpenClaw)');
-    process.exit(1);
+    if (!input && !imagePath && !imageBase64) {
+      console.log('Usage: node router.js <your question> [--image <path>] [--model <model>]');
+      console.log('       node router.js --api-mode <input.json>  (OpenClaw連携モード)');
+      console.log('');
+      console.log('Options:');
+      console.log('  --image <path>     Image file path');
+      console.log('  --base64 <data>    Base64 encoded image');
+      console.log('  --model <model>    Model type (auto/local/cloud/local:<model-id>)');
+      console.log('  --api-mode <file>  API mode (JSON input/output for OpenClaw)');
+      process.exit(1);
+    }
+
+    const options = {};
+    if (imagePath) options.imagePath = imagePath;
+    if (imageBase64) options.imageBase64 = imageBase64;
+    if (modelType) options.modelType = modelType;
+
+    router.route(input, options).then(result => {
+      console.log('\n📄 応答:\n');
+      console.log(result.response);
+      console.log('\n');
+      router.showStats();
+    }).catch(error => {
+      console.error('Error:', error);
+      process.exit(1);
+    });
   }
-
-  const options = {};
-  if (imagePath) options.imagePath = imagePath;
-  if (imageBase64) options.imageBase64 = imageBase64;
-  if (modelType) options.modelType = modelType;
-
-  router.route(input, options).then(result => {
-    console.log('\n📄 応答:\n');
-    console.log(result.response);
-    console.log('\n');
-    router.showStats();
-  }).catch(error => {
-    console.error('Error:', error);
-    process.exit(1);
-  });
 }
