@@ -1,0 +1,19 @@
+title: LLM Smart Router
+description: ローカルLLMとクラウドLLMを自動で切り替えるインテリジェントルーター
+theme: jekyll-theme-cayman
+baseurl: /llm-smart-router
+url: https://shinzo111.github.io
+
+nav:
+  - title: Home
+    url: /
+  - title: Quick Start
+    url: /quick-start
+  - title: Install
+    url: /INSTALL
+  - title: User Manual
+    url: /USER_MANUAL
+  - title: GUI Guide
+    url: /README_GUI
+  - title: Conversation History
+    url: /conversation_history_guide
