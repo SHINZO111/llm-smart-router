@@ -568,16 +568,20 @@ class SettingsDialog(QDialog):
         # レジストリからモデル一覧を取得
         available_models = self._get_available_model_refs()
 
+        available_set = set(available_models)
+
         if current_priority:
-            # 保存済み順序で表示し、新しいモデルは末尾に追加
+            # 保存済み順序で表示（スキャン結果に存在するもののみ）
             seen = set()
             for ref in current_priority:
-                self._add_priority_item(ref)
-                seen.add(ref)
+                if ref in available_set and ref not in seen:
+                    self._add_priority_item(ref)
+                    seen.add(ref)
+            # 新しく検出されたモデルは末尾に追加
             for ref in available_models:
                 if ref not in seen:
                     self._add_priority_item(ref)
-                    seen.add(ref)  # 追加したら必ずseenに記録
+                    seen.add(ref)
         else:
             # デフォルト: 全ローカルモデル → cloud（重複排除）
             seen = set()
