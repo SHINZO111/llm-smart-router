@@ -1066,6 +1066,14 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("LLM Smart Router Pro")
         self.setMinimumSize(900, 600)
+        # アプリアイコン設定
+        _icon_path = Path(__file__).parent / "assets" / "icon.ico"
+        if _icon_path.exists():
+            self.setWindowIcon(QIcon(str(_icon_path)))
+        else:
+            _png_path = Path(__file__).parent / "assets" / "icon.png"
+            if _png_path.exists():
+                self.setWindowIcon(QIcon(str(_png_path)))
         self.settings = QSettings('LLMSmartRouter', 'Pro')
         self.router_path = self.settings.value(
             'router_path', str(Path(__file__).parent.parent.parent))

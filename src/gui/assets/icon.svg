@@ -1,0 +1,147 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10101a"/>
+      <stop offset="100%" stop-color="#161625"/>
+    </linearGradient>
+    <!-- Primary gradient (indigo → purple) -->
+    <linearGradient id="primaryGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <!-- Green accent -->
+    <linearGradient id="greenGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981"/>
+      <stop offset="100%" stop-color="#34d399"/>
+    </linearGradient>
+    <!-- Cyan accent -->
+    <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <!-- Amber accent -->
+    <linearGradient id="amberGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#fbbf24"/>
+    </linearGradient>
+    <!-- Glows -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="6" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="12" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- Rounded square clip -->
+    <clipPath id="roundedClip">
+      <rect width="512" height="512" rx="108" ry="108"/>
+    </clipPath>
+  </defs>
+
+  <!-- Background -->
+  <g clip-path="url(#roundedClip)">
+    <rect width="512" height="512" fill="url(#bgGrad)"/>
+    <!-- Subtle grid pattern -->
+    <g opacity="0.04" stroke="#6366f1" stroke-width="1">
+      <line x1="128" y1="0" x2="128" y2="512"/>
+      <line x1="256" y1="0" x2="256" y2="512"/>
+      <line x1="384" y1="0" x2="384" y2="512"/>
+      <line x1="0" y1="128" x2="512" y2="128"/>
+      <line x1="0" y1="256" x2="512" y2="256"/>
+      <line x1="0" y1="384" x2="512" y2="384"/>
+    </g>
+
+    <!-- Ambient glow behind center -->
+    <circle cx="256" cy="248" r="120" fill="#6366f1" opacity="0.06" filter="url(#softGlow)"/>
+
+    <!-- Routing paths from center node to output nodes -->
+    <!-- Path to top-right (Cloud / Indigo) -->
+    <path d="M256 248 C290 200, 330 165, 380 140" stroke="url(#primaryGrad)" stroke-width="3.5" fill="none" opacity="0.7" stroke-linecap="round"/>
+    <!-- Path to right (Local / Amber) -->
+    <path d="M256 248 C300 248, 340 260, 390 268" stroke="url(#amberGrad)" stroke-width="3.5" fill="none" opacity="0.7" stroke-linecap="round"/>
+    <!-- Path to bottom-right (Fallback / Cyan) -->
+    <path d="M256 248 C290 296, 330 340, 370 370" stroke="url(#cyanGrad)" stroke-width="3.5" fill="none" opacity="0.7" stroke-linecap="round"/>
+
+    <!-- Input path from left -->
+    <path d="M110 248 L230 248" stroke="#94a3b8" stroke-width="3" fill="none" opacity="0.4" stroke-linecap="round" stroke-dasharray="8 6"/>
+
+    <!-- Animated-looking data dots along paths -->
+    <circle cx="170" cy="248" r="3" fill="#94a3b8" opacity="0.6"/>
+    <circle cx="320" cy="190" r="3" fill="#818cf8" opacity="0.7"/>
+    <circle cx="340" cy="258" r="3" fill="#fbbf24" opacity="0.7"/>
+    <circle cx="315" cy="315" r="3" fill="#22d3ee" opacity="0.7"/>
+
+    <!-- Center routing hub -->
+    <g filter="url(#glow)">
+      <!-- Outer ring -->
+      <circle cx="256" cy="248" r="52" fill="none" stroke="url(#primaryGrad)" stroke-width="2.5" opacity="0.5"/>
+      <!-- Inner filled circle -->
+      <circle cx="256" cy="248" r="38" fill="url(#primaryGrad)" opacity="0.9"/>
+      <!-- Router symbol: three-pronged fork -->
+      <g stroke="#eef2ff" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" fill="none">
+        <line x1="242" y1="248" x2="252" y2="248"/>
+        <line x1="256" y1="248" x2="272" y2="236"/>
+        <line x1="256" y1="248" x2="272" y2="248"/>
+        <line x1="256" y1="248" x2="272" y2="260"/>
+      </g>
+      <!-- Tiny arrow heads -->
+      <g fill="#eef2ff" stroke="none">
+        <polygon points="270,232 276,236 270,240"/>
+        <polygon points="270,244 276,248 270,252"/>
+        <polygon points="270,256 276,260 270,264"/>
+      </g>
+    </g>
+
+    <!-- Output node: Cloud (top-right) -->
+    <g filter="url(#glow)">
+      <circle cx="392" cy="132" r="26" fill="#161625" stroke="url(#primaryGrad)" stroke-width="2.5"/>
+      <!-- Cloud icon -->
+      <path d="M380 138 a8 8 0 0 1 8-12 a10 10 0 0 1 18 2 a6 6 0 0 1 -2 12z" fill="none" stroke="#818cf8" stroke-width="2" stroke-linecap="round"/>
+    </g>
+
+    <!-- Output node: Local (right) -->
+    <g filter="url(#glow)">
+      <circle cx="402" cy="268" r="26" fill="#161625" stroke="url(#amberGrad)" stroke-width="2.5"/>
+      <!-- Monitor icon -->
+      <rect x="389" y="258" width="26" height="16" rx="2" fill="none" stroke="#fbbf24" stroke-width="2"/>
+      <line x1="402" y1="274" x2="402" y2="280" stroke="#fbbf24" stroke-width="2"/>
+      <line x1="395" y1="280" x2="409" y2="280" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"/>
+    </g>
+
+    <!-- Output node: Fallback (bottom-right) -->
+    <g filter="url(#glow)">
+      <circle cx="380" cy="380" r="26" fill="#161625" stroke="url(#cyanGrad)" stroke-width="2.5"/>
+      <!-- Refresh/retry icon -->
+      <path d="M372 380 a12 12 0 1 1 4 10" fill="none" stroke="#22d3ee" stroke-width="2" stroke-linecap="round"/>
+      <polygon points="374,388 376,392 380,388" fill="#22d3ee"/>
+    </g>
+
+    <!-- Input node (left) -->
+    <g filter="url(#glow)">
+      <circle cx="100" cy="248" r="22" fill="#161625" stroke="#64748b" stroke-width="2" opacity="0.8"/>
+      <!-- User/prompt icon -->
+      <circle cx="100" cy="242" r="6" fill="none" stroke="#94a3b8" stroke-width="1.8"/>
+      <path d="M90 258 a14 10 0 0 1 20 0" fill="none" stroke="#94a3b8" stroke-width="1.8"/>
+    </g>
+
+    <!-- "SR" text badge at bottom -->
+    <g opacity="0.9">
+      <text x="256" y="432" text-anchor="middle" font-family="'Segoe UI', 'SF Pro Display', system-ui, sans-serif" font-weight="700" font-size="48" fill="url(#primaryGrad)" letter-spacing="6">SR</text>
+      <text x="256" y="458" text-anchor="middle" font-family="'Segoe UI', 'SF Pro Display', system-ui, sans-serif" font-weight="400" font-size="14" fill="#64748b" letter-spacing="3">SMART ROUTER</text>
+    </g>
+
+    <!-- Corner accent dots -->
+    <circle cx="52" cy="52" r="4" fill="#6366f1" opacity="0.3"/>
+    <circle cx="460" cy="52" r="4" fill="#10b981" opacity="0.3"/>
+    <circle cx="52" cy="460" r="4" fill="#06b6d4" opacity="0.3"/>
+    <circle cx="460" cy="460" r="4" fill="#f59e0b" opacity="0.3"/>
+  </g>
+</svg>
