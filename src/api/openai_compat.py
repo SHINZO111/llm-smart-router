@@ -262,6 +262,6 @@ async def list_models():
         for m in registry.get_local_models():
             models.append(ModelObject(id=f"local:{m.id}"))
     except Exception:
-        pass
+        logger.debug("レジストリからローカルモデル読み込みスキップ", exc_info=True)
 
     return ModelListResponse(data=models)

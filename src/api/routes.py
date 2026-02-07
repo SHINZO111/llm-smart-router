@@ -69,7 +69,7 @@ def _get_topic_or_404(topic_id: str):
     return topic
 
 
-def _parse_enum(enum_cls, value: str, field_name: str):
+def _parse_enum(enum_cls: type, value: str, field_name: str) -> Any:
     """Enumバリデーション共通化"""
     try:
         return enum_cls(value.lower())
@@ -77,7 +77,7 @@ def _parse_enum(enum_cls, value: str, field_name: str):
         raise HTTPException(status_code=400, detail=f"Invalid {field_name}: {value}")
 
 
-def _serialize_conversation_export(conv, messages):
+def _serialize_conversation_export(conv: Any, messages: List[Any]) -> Dict[str, Any]:
     """会話エクスポート用のdict変換"""
     return {
         "id": conv.id,
@@ -654,11 +654,14 @@ async def trigger_model_scan(background_tasks: BackgroundTasks):
 
     async def _run_scan():
         async with _scan_lock:
-            scanner = MultiRuntimeScanner()
-            results = await scanner.scan_all()
-            registry_path = str(project_root.parent / "data" / "model_registry.json")
-            registry = ModelRegistry(cache_path=registry_path)
-            registry.update(results)
+            try:
+                scanner = MultiRuntimeScanner()
+                results = await scanner.scan_all()
+                registry_path = str(project_root.parent / "data" / "model_registry.json")
+                registry = ModelRegistry(cache_path=registry_path)
+                registry.update(results)
+            except Exception:
+                logger.error("バックグラウンドモデルスキャン失敗", exc_info=True)
 
     background_tasks.add_task(_run_scan)
 
@@ -741,7 +744,10 @@ async def pull_ollama_model(request: OllamaModelRequest, background_tasks: Backg
 
     async def _run_pull():
         async with _ollama_pull_lock:
-            client.pull_model(model_name)
+            try:
+                client.pull_model(model_name)
+            except Exception:
+                logger.error(f"Ollamaモデルダウンロード失敗: {model_name}", exc_info=True)
 
     background_tasks.add_task(_run_pull)
 
@@ -780,7 +786,7 @@ class RouterQueryRequest(BaseModel):
 
     @field_validator('context')
     @classmethod
-    def validate_context_size(cls, v):
+    def validate_context_size(cls, v: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         """コンテキストサイズの検証"""
         if v:
             # キー数制限
