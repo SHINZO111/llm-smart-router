@@ -21,6 +21,10 @@ except ImportError:
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# 非推奨パッケージのテストなのでDeprecationWarningを抑制
+import warnings
+warnings.filterwarnings("ignore", message="lmstudio パッケージは非推奨です", category=DeprecationWarning)
+
 # テスト対象のインポート
 try:
     from lmstudio.model_detector import (

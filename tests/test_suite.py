@@ -61,7 +61,8 @@ except ImportError as e:
 
 class TestResult:
     """テスト結果を管理するクラス"""
-    
+    __test__ = False  # pytestの収集対象外
+
     def __init__(self, name: str, category: str):
         self.name = name
         self.category = category
@@ -85,7 +86,8 @@ class TestResult:
 
 class TestReport:
     """テストレポート生成クラス"""
-    
+    __test__ = False  # pytestの収集対象外
+
     def __init__(self):
         self.results: List[TestResult] = []
         self.start_time = datetime.now()
@@ -172,7 +174,8 @@ class TestReport:
 
 class TestRunner:
     """テスト実行エンジン"""
-    
+    __test__ = False  # pytestの収集対象外
+
     def __init__(self):
         self.report = TestReport()
         

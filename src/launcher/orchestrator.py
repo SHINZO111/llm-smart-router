@@ -278,10 +278,16 @@ class LaunchOrchestrator:
         if self._shutdown_done:
             return
         self._shutdown_done = True
-        logger.info("シャットダウン中...")
-        if self._process_manager:
-            self._process_manager.stop_all(timeout=10.0)
-        logger.info("シャットダウン完了")
+        # pytest終了後など、ストリームが閉じている場合のloggingエラーを抑制
+        _prev_raise = logging.raiseExceptions
+        logging.raiseExceptions = False
+        try:
+            logger.info("シャットダウン中...")
+            if self._process_manager:
+                self._process_manager.stop_all(timeout=10.0)
+            logger.info("シャットダウン完了")
+        finally:
+            logging.raiseExceptions = _prev_raise
 
     def _build_stage_list(self, skip_discord: bool):
         """実行ステージリストを構築"""
