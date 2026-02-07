@@ -42,11 +42,13 @@ nul
 backups/
 *.exe
 *.spec
+*.bak
 
 # External projects
 webclaw/
 agent-lightning/
 everything-claude-code/
+openclaw/
 
 # Nested repo artifact
 llm-smart-router/
