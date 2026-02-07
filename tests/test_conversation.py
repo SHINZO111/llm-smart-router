@@ -23,9 +23,12 @@ from datetime import datetime, timedelta
 from unittest.mock import Mock, patch, MagicMock
 
 # パス設定
-sys.path.insert(0, str(Path(__file__).parent.parent))
-sys.path.insert(0, 'F:\\llm-smart-router')
-sys.path.insert(0, 'F:\\llm-smart-router\\src')
+_project_root = str(Path(__file__).parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+_src = str(Path(__file__).parent.parent / "src")
+if _src not in sys.path:
+    sys.path.insert(0, _src)
 
 import unittest
 from typing import Optional, List, Dict, Any

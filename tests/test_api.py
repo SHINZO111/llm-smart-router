@@ -58,7 +58,6 @@ class TestConversationEndpoints:
         assert "id" in data
         assert data["user_id"] == "test_user"
         assert data["status"] == "active"
-        return data["id"]
     
     def test_get_conversation(self):
         """Test getting a conversation"""
@@ -201,7 +200,6 @@ class TestTopicEndpoints:
         assert data["name"] == "Test Topic"
         assert data["description"] == "Test description"
         assert data["color"] == "#FF0000"
-        return data["id"]
     
     def test_get_topic(self):
         """Test getting a topic"""

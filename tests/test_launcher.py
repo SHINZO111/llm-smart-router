@@ -355,15 +355,21 @@ class TestLaunchOrchestrator:
         )
         orch = LaunchOrchestrator(config=config)
         stages = orch._build_stage_list(skip_discord=False)
-        assert len(stages) == 4
+        assert len(stages) == 6
 
         names = [s[0] for s in stages]
-        assert names == ["lmstudio_launch", "model_detect", "openclaw", "discord_bot"]
+        assert names == [
+            "lmstudio_launch", "ollama_launch", "llamacpp_launch",
+            "model_detect", "openclaw", "discord_bot",
+        ]
 
-        # openclaw は無効
+        # ollama / llamacpp はデフォルト無効
+        assert stages[1][2] is False
         assert stages[2][2] is False
+        # openclaw は無効
+        assert stages[4][2] is False
         # discord は有効
-        assert stages[3][2] is True
+        assert stages[5][2] is True
 
     def test_build_stage_list_skip_discord(self):
         """Discord スキップテスト"""
@@ -371,7 +377,7 @@ class TestLaunchOrchestrator:
         orch = LaunchOrchestrator(config=config)
         stages = orch._build_stage_list(skip_discord=True)
         # discord_bot は skip_discord=True で無効化
-        assert stages[3][2] is False
+        assert stages[5][2] is False
 
     def test_run_stage_success(self):
         """ステージ実行: 成功"""
@@ -428,11 +434,13 @@ class TestLaunchOrchestrator:
         orch = LaunchOrchestrator(config=config)
         results = orch.run()
 
-        assert len(results) == 4
+        assert len(results) == 6
         assert results[0].status == StageStatus.SUCCESS  # lmstudio
-        assert results[1].status == StageStatus.SUCCESS  # model_detect
-        assert results[2].status == StageStatus.SUCCESS  # openclaw
-        assert results[3].status == StageStatus.SKIPPED  # discord
+        assert results[1].status == StageStatus.SKIPPED  # ollama (disabled)
+        assert results[2].status == StageStatus.SKIPPED  # llamacpp (disabled)
+        assert results[3].status == StageStatus.SUCCESS  # model_detect
+        assert results[4].status == StageStatus.SUCCESS  # openclaw
+        assert results[5].status == StageStatus.SKIPPED  # discord
 
     def test_shutdown(self):
         """シャットダウンテスト"""
@@ -456,8 +464,8 @@ class TestLaunchOrchestrator:
         orch = LaunchOrchestrator(config=config, on_progress=on_progress)
         orch.run()
 
-        # 各ステージで SKIPPED コールバックが呼ばれる
-        assert len(progress_log) == 4
+        # 各ステージで SKIPPED コールバックが呼ばれる（6ステージ）
+        assert len(progress_log) == 6
         assert all(status == StageStatus.SKIPPED for _, status, _ in progress_log)
 
 
@@ -519,6 +527,6 @@ class TestIntegration:
             orch = LaunchOrchestrator(config=config)
             results = orch.run()
 
-        discord_result = results[3]
+        discord_result = results[5]  # index 5: discord_bot (after ollama+llamacpp)
         assert discord_result.status == StageStatus.FAILED
         assert "DISCORD_BOT_TOKEN" in discord_result.error
