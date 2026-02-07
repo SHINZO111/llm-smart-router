@@ -1,9 +1,14 @@
 {
   "priority": [
-    "local:qwen/qwen3-4b-2507",
+    "cloud",
     "local:essentialai/rnj-1",
     "local:deepseek/deepseek-r1-0528-qwen3-8b",
-    "cloud"
+    "local:qwen/qwen3-4b-2507",
+    "local:qwen/qwen3-vl-4b",
+    "local:qwen/qwen3-4b-thinking-2507",
+    "local:mistralai/ministral-3-3b",
+    "local:liquid/lfm2.5-1.2b",
+    "local:qwen/qwen3-vl-8b"
   ],
-  "updated_at": "2026-02-06T00:15:00.000000"
+  "updated_at": "2026-02-07T11:04:57.313913"
 }

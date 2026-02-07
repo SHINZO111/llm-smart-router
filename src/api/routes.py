@@ -655,11 +655,7 @@ async def trigger_model_scan(background_tasks: BackgroundTasks):
     async def _run_scan():
         async with _scan_lock:
             scanner = MultiRuntimeScanner()
-            loop = asyncio.new_event_loop()
-            try:
-                results = loop.run_until_complete(scanner.scan_all())
-            finally:
-                loop.close()
+            results = await scanner.scan_all()
             registry_path = str(project_root.parent / "data" / "model_registry.json")
             registry = ModelRegistry(cache_path=registry_path)
             registry.update(results)
@@ -667,6 +663,109 @@ async def trigger_model_scan(background_tasks: BackgroundTasks):
     background_tasks.add_task(_run_scan)
 
     return {"status": "started", "message": "モデルスキャン開始"}
+
+
+# ==================== Ollama Model Management ====================
+
+class OllamaModelRequest(BaseModel):
+    """Ollamaモデル操作リクエスト"""
+    name: str = Field(..., min_length=1, max_length=200, description="モデル名")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        import re
+        if not re.match(r'^[a-zA-Z0-9._:/-]+$', v):
+            raise ValueError("モデル名に無効な文字が含まれています")
+        return v
+
+
+def _get_ollama_client():
+    """OllamaClientインスタンスを取得"""
+    from models.ollama_client import OllamaClient
+    return OllamaClient()
+
+
+@router.get("/models/ollama", tags=["Models"])
+@_handle_errors
+async def list_ollama_models():
+    """Ollamaのモデル一覧を取得"""
+    client = _get_ollama_client()
+    if not client.is_available():
+        raise HTTPException(status_code=503, detail="Ollamaが応答していません")
+
+    models = client.list_models()
+    return {
+        "models": models,
+        "count": len(models),
+    }
+
+
+@router.get("/models/ollama/{name:path}", tags=["Models"])
+@_handle_errors
+async def show_ollama_model(name: str):
+    """Ollamaモデルの詳細情報を取得"""
+    import re
+    if not re.match(r'^[a-zA-Z0-9._:/-]+$', name):
+        raise HTTPException(status_code=400, detail="無効なモデル名")
+    if len(name) > 200:
+        raise HTTPException(status_code=400, detail="モデル名が長すぎます")
+
+    client = _get_ollama_client()
+    if not client.is_available():
+        raise HTTPException(status_code=503, detail="Ollamaが応答していません")
+
+    info = client.show_model(name)
+    if not info:
+        raise HTTPException(status_code=404, detail="モデルが見つかりません")
+    return info
+
+
+_ollama_pull_lock = asyncio.Lock()
+
+
+@router.post("/models/ollama/pull", tags=["Models"])
+@_handle_errors
+async def pull_ollama_model(request: OllamaModelRequest, background_tasks: BackgroundTasks):
+    """
+    Ollamaモデルをダウンロード（バックグラウンド実行）
+    """
+    if _ollama_pull_lock.locked():
+        return {"status": "busy", "message": "別のモデルをダウンロード中です"}
+
+    client = _get_ollama_client()
+    if not client.is_available():
+        raise HTTPException(status_code=503, detail="Ollamaが応答していません")
+
+    model_name = request.name
+
+    async def _run_pull():
+        async with _ollama_pull_lock:
+            client.pull_model(model_name)
+
+    background_tasks.add_task(_run_pull)
+
+    return {"status": "started", "message": f"モデル '{model_name}' のダウンロード開始"}
+
+
+@router.delete("/models/ollama/{name:path}", tags=["Models"])
+@_handle_errors
+async def delete_ollama_model(name: str):
+    """Ollamaモデルを削除"""
+    import re
+    if not re.match(r'^[a-zA-Z0-9._:/-]+$', name):
+        raise HTTPException(status_code=400, detail="無効なモデル名")
+    if len(name) > 200:
+        raise HTTPException(status_code=400, detail="モデル名が長すぎます")
+
+    client = _get_ollama_client()
+    if not client.is_available():
+        raise HTTPException(status_code=503, detail="Ollamaが応答していません")
+
+    success = client.delete_model(name)
+    if success:
+        return {"status": "deleted", "message": f"モデル '{name}' を削除しました"}
+    raise HTTPException(status_code=500, detail="モデルの削除に失敗しました")
 
 
 # ==================== Router Endpoints (OpenClaw Integration) ====================

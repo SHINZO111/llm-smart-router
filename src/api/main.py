@@ -19,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
 from api.routes import router
+from api.openai_compat import openai_router
 
 # ログローテーション設定
 def setup_logging():
@@ -70,9 +71,30 @@ async def lifespan(app: FastAPI):
 # Create FastAPI application
 app = FastAPI(
     title="LLM Smart Router API",
-    description="Conversation History Management API for LLM Smart Router",
+    description=(
+        "LLM Smart Routerの統合REST API。\n\n"
+        "## 機能\n"
+        "- **会話管理** (`/api/v1/conversations`): 会話のCRUD、メッセージ管理、検索、エクスポート/インポート\n"
+        "- **トピック管理** (`/api/v1/topics`): 会話の階層的カテゴリ管理\n"
+        "- **ルーティング** (`/api/v1/router`): ローカル/クラウドLLMへのインテリジェントルーティング\n"
+        "- **モデル検出** (`/api/v1/models`): ローカルランタイム自動検出・レジストリ\n"
+        "- **OpenAI互換** (`/v1/chat/completions`): nanobot/LiteLLM等からの利用\n\n"
+        "## 認証\n"
+        "ローカル利用のためAPI認証は不要。CORS設定は`ALLOWED_ORIGINS`環境変数で制御。"
+    ),
     version="1.0.0",
-    lifespan=lifespan
+    lifespan=lifespan,
+    openapi_tags=[
+        {"name": "Conversations", "description": "会話のCRUD操作"},
+        {"name": "Messages", "description": "メッセージの管理"},
+        {"name": "Topics", "description": "トピック（カテゴリ）管理"},
+        {"name": "Search", "description": "全文検索・フィルタリング"},
+        {"name": "Export/Import", "description": "会話のエクスポート・インポート"},
+        {"name": "Router", "description": "LLMルーティングエンジン連携"},
+        {"name": "Models", "description": "モデル検出・レジストリ"},
+        {"name": "OpenAI Compatible", "description": "OpenAI互換API（nanobot/LiteLLM対応）"},
+        {"name": "Stats", "description": "統計情報"},
+    ],
 )
 
 # CORS middleware
@@ -94,6 +116,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(router, prefix="/api/v1")
+app.include_router(openai_router, prefix="/v1", tags=["OpenAI Compatible"])
 
 
 @app.get("/")

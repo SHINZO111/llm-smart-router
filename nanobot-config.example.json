@@ -1,0 +1,15 @@
+{
+  "providers": {
+    "vllm": {
+      "apiKey": "dummy",
+      "apiBase": "http://localhost:8000/v1"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "model": "smart-router",
+      "maxTokens": 4096,
+      "temperature": 0.7
+    }
+  }
+}

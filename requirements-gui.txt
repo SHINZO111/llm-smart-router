@@ -25,6 +25,7 @@ urllib3>=2.0.0              # HTTPクライアント
 # === Utilities ===
 pyyaml>=6.0.1               # YAML設定ファイル
 python-dateutil>=2.8.2      # 日時処理
+Pillow>=10.0.0              # 画像処理（マルチモーダル対応）
 
 # === Performance ===
 psutil>=5.9.0               # システム情報取得

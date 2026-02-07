@@ -227,6 +227,7 @@ class ConversationSidebar(QWidget):
         
         # 新規会話ボタン
         self.new_btn = QPushButton("+ New")
+        self.new_btn.setToolTip("新しい会話を作成（Ctrl+N）")
         self.new_btn.setStyleSheet("""
             QPushButton {
                 background-color: #6366f1;
@@ -264,6 +265,7 @@ class ConversationSidebar(QWidget):
         search_layout.addWidget(search_icon)
         
         self.search_input = QLineEdit()
+        self.search_input.setToolTip("会話タイトルで検索")
         self.search_input.setPlaceholderText("Search conversations...")
         self.search_input.setStyleSheet("""
             QLineEdit {
@@ -278,6 +280,7 @@ class ConversationSidebar(QWidget):
         search_layout.addWidget(self.search_input, 1)
         
         self.clear_search_btn = QPushButton("✕")
+        self.clear_search_btn.setToolTip("検索をクリア")
         self.clear_search_btn.setFixedSize(20, 20)
         self.clear_search_btn.setStyleSheet("""
             QPushButton {
@@ -302,6 +305,7 @@ class ConversationSidebar(QWidget):
         
         # 日付フィルター
         self.date_filter = QComboBox()
+        self.date_filter.setToolTip("期間で会話をフィルタ")
         self.date_filter.addItems(["All Time", "Today", "Yesterday", "This Week", "This Month"])
         self.date_filter.setStyleSheet("""
             QComboBox {
@@ -324,6 +328,7 @@ class ConversationSidebar(QWidget):
         
         # モデルフィルター
         self.model_filter = QComboBox()
+        self.model_filter.setToolTip("使用モデルで会話をフィルタ")
         self.model_filter.addItems(["All Models", "Claude", "Local", "Auto"])
         self.model_filter.setStyleSheet(self.date_filter.styleSheet())
         self.model_filter.currentIndexChanged.connect(self._apply_filters)
@@ -372,7 +377,7 @@ class ConversationSidebar(QWidget):
         scroll.setWidget(self.list_container)
         layout.addWidget(scroll, 1)
         
-        self.setMinimumWidth(280)
+        self.setMinimumWidth(220)
         self.setMaximumWidth(400)
     
     def _on_search_changed(self, text: str):

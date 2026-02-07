@@ -121,32 +121,86 @@ class ConversationTabBar(QTabBar):
 # ============================================================
 
 class ConversationTabContent(QWidget):
-    """タブ内の会話コンテンツ"""
-    
+    """タブ内の会話コンテンツ（メッセージ表示・コピー対応）"""
+
     def __init__(self, conversation_id: str, parent=None):
         super().__init__(parent)
         self.conversation_id = conversation_id
+        self._messages: list = []  # (role, content, model, timestamp)
         self._setup_ui()
-    
+
     def _setup_ui(self):
+        from PySide6.QtWidgets import QTextEdit, QScrollArea
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
-        # メッセージエリア
-        self.message_area = QWidget()
-        self.message_area.setStyleSheet("background-color: #0a0a0f;")
-        message_layout = QVBoxLayout(self.message_area)
-        message_layout.setContentsMargins(16, 16, 16, 16)
-        
-        # プレースホルダー
-        placeholder = QLabel("Conversation content will appear here...")
-        placeholder.setStyleSheet("color: #64748b; font-size: 14px;")
-        placeholder.setAlignment(Qt.AlignCenter)
-        message_layout.addWidget(placeholder)
-        message_layout.addStretch()
-        
-        layout.addWidget(self.message_area, 1)
+
+        # メッセージ表示用テキストエリア（読み取り専用）
+        self._text_display = QTextEdit()
+        self._text_display.setReadOnly(True)
+        self._text_display.setStyleSheet("""
+            QTextEdit {
+                background-color: #0a0a0f;
+                color: #eef2ff;
+                border: none;
+                font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
+                font-size: 13px;
+                padding: 16px;
+                selection-background-color: #6366f1;
+            }
+        """)
+        self._text_display.setPlaceholderText("Conversation content will appear here...")
+        layout.addWidget(self._text_display, 1)
+
+    def add_message(self, role: str, content: str, model: str = "", timestamp: str = ""):
+        """メッセージを追加して表示を更新"""
+        self._messages.append((role, content, model, timestamp))
+        self._render_messages()
+
+    def _render_messages(self):
+        """全メッセージを再描画"""
+        html_parts = []
+        for role, content, model, ts in self._messages:
+            if role == "user":
+                label = '<span style="color: #6366f1; font-weight: bold;">You</span>'
+            elif role == "assistant":
+                model_tag = f' <span style="color: #64748b; font-size: 11px;">({model})</span>' if model else ""
+                label = f'<span style="color: #10b981; font-weight: bold;">Assistant</span>{model_tag}'
+            else:
+                label = f'<span style="color: #f59e0b; font-weight: bold;">{role}</span>'
+
+            # コンテンツのHTMLエスケープ
+            escaped = (content
+                       .replace("&", "&amp;")
+                       .replace("<", "&lt;")
+                       .replace(">", "&gt;")
+                       .replace("\n", "<br>"))
+
+            html_parts.append(
+                f'<div style="margin-bottom: 16px;">'
+                f'<div style="margin-bottom: 4px;">{label}</div>'
+                f'<div style="color: #cbd5e1; line-height: 1.6;">{escaped}</div>'
+                f'</div>'
+            )
+
+        self._text_display.setHtml("".join(html_parts))
+        # 末尾にスクロール
+        sb = self._text_display.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    def get_content(self) -> str:
+        """全会話をプレーンテキストで取得（コピー用）"""
+        lines = []
+        for role, content, model, ts in self._messages:
+            prefix = "You" if role == "user" else f"Assistant ({model})" if model else "Assistant"
+            lines.append(f"[{prefix}]\n{content}\n")
+        return "\n".join(lines)
+
+    def clear_messages(self):
+        """メッセージをクリア"""
+        self._messages.clear()
+        self._text_display.clear()
 
 
 # ============================================================

@@ -240,6 +240,120 @@ class StatusDot(QWidget):
 
 
 # ============================================================
+# Model Badge Widget
+# ============================================================
+
+class ModelBadge(QFrame):
+    """使用中のモデルを目立つバッジで表示"""
+
+    # モデル種別ごとの設定
+    _STYLES = {
+        'auto':  {'icon': '🤖', 'label': 'Auto',  'color': Colors.SECONDARY,     'bg': '#10b98118'},
+        'local': {'icon': '💻', 'label': 'Local', 'color': Colors.ACCENT,        'bg': '#f59e0b18'},
+        'cloud': {'icon': '☁️', 'label': 'Cloud', 'color': Colors.CYAN,          'bg': '#06b6d418'},
+    }
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._model_key = 'auto'
+        self._model_detail = ''
+
+        self.setMinimumHeight(48)
+        self.setMaximumHeight(64)
+
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(14, 8, 14, 8)
+        lay.setSpacing(10)
+
+        # アイコン
+        self._icon = QLabel('🤖')
+        self._icon.setStyleSheet('font-size: 22px; border: none; background: transparent;')
+        self._icon.setFixedWidth(30)
+        lay.addWidget(self._icon)
+
+        # ラベル列
+        text_col = QVBoxLayout()
+        text_col.setSpacing(0)
+        text_col.setContentsMargins(0, 0, 0, 0)
+
+        self._type_label = QLabel('Auto')
+        self._type_label.setStyleSheet(
+            f'font-size: 15px; font-weight: 700; color: {Colors.SECONDARY};'
+            ' border: none; background: transparent;'
+        )
+        text_col.addWidget(self._type_label)
+
+        self._detail_label = QLabel('')
+        self._detail_label.setStyleSheet(
+            f'font-size: 11px; color: {Colors.TEXT_DIM};'
+            ' border: none; background: transparent;'
+        )
+        text_col.addWidget(self._detail_label)
+
+        lay.addLayout(text_col, 1)
+
+        # ステータスドット
+        self._dot = StatusDot(Colors.SECONDARY)
+        lay.addWidget(self._dot)
+
+        self._apply_style()
+
+    def _resolve_key(self, model_data: str) -> str:
+        if not model_data:
+            return 'auto'
+        if model_data == 'auto':
+            return 'auto'
+        if model_data.startswith('local:') or model_data == 'local':
+            return 'local'
+        return 'cloud'
+
+    def set_model(self, model_data: str, detail: str = ''):
+        """モデルを設定して表示を更新"""
+        key = self._resolve_key(model_data)
+        self._model_key = key
+        self._model_detail = detail
+
+        style = self._STYLES.get(key, self._STYLES['auto'])
+        self._icon.setText(style['icon'])
+        self._type_label.setText(style['label'])
+        self._type_label.setStyleSheet(
+            f'font-size: 15px; font-weight: 700; color: {style["color"]};'
+            ' border: none; background: transparent;'
+        )
+        self._detail_label.setText(detail)
+        self._dot.set_color(style['color'])
+        self._apply_style()
+
+    def set_detail(self, text: str):
+        self._detail_label.setText(text)
+
+    def set_processing(self, processing: bool):
+        """処理中の見た目に切り替え"""
+        if processing:
+            self._detail_label.setText('Processing...')
+            self._detail_label.setStyleSheet(
+                f'font-size: 11px; color: {Colors.PRIMARY_LIGHT};'
+                ' border: none; background: transparent;'
+            )
+        else:
+            self._detail_label.setStyleSheet(
+                f'font-size: 11px; color: {Colors.TEXT_DIM};'
+                ' border: none; background: transparent;'
+            )
+
+    def _apply_style(self):
+        style = self._STYLES.get(self._model_key, self._STYLES['auto'])
+        self.setStyleSheet(f"""
+            ModelBadge {{
+                background-color: {style['bg']};
+                border: 1px solid {style['color']}40;
+                border-left: 4px solid {style['color']};
+                border-radius: 10px;
+            }}
+        """)
+
+
+# ============================================================
 # LLM Worker Thread
 # ============================================================
 
@@ -660,6 +774,16 @@ class DarkTheme:
             QScrollBar::handle:horizontal:hover {{ background-color: {Colors.PRIMARY}80; }}
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width: 0; }}
 
+            QToolTip {{
+                background-color: {Colors.BG_CARD};
+                color: {Colors.TEXT};
+                border: 1px solid {Colors.BORDER};
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 12px;
+                line-height: 1.4;
+            }}
+
             QLabel#section_title {{ color: {Colors.PRIMARY_LIGHT}; font-size: 13px; font-weight: 600; }}
             QLabel#status_ok {{ color: {Colors.SECONDARY}; font-weight: 500; }}
             QLabel#status_warn {{ color: {Colors.ACCENT}; font-weight: 500; }}
@@ -679,8 +803,8 @@ class ImageDropArea(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
-        self.setFixedHeight(120)
-        self.setMinimumWidth(300)
+        self.setMinimumHeight(80)
+        self.setMaximumHeight(160)
         self._has_image = False
         self._update_style()
         
@@ -770,7 +894,8 @@ class ImagePreviewWidget(QFrame):
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(200, 150)
+        self.setMinimumSize(140, 100)
+        self.setMaximumSize(260, 200)
         self.setStyleSheet(f"""
             ImagePreviewWidget {{
                 background-color: {Colors.BG_INPUT};
@@ -946,7 +1071,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LLM Smart Router Pro")
-        self.setMinimumSize(1600, 900)
+        self.setMinimumSize(900, 600)
         self.settings = QSettings('LLMSmartRouter', 'Pro')
         self.router_path = self.settings.value(
             'router_path', str(Path(__file__).parent.parent.parent))
@@ -972,6 +1097,9 @@ class MainWindow(QMainWindow):
         self._init_timers()
         QTimer.singleShot(500, self.check_api_key)
         QTimer.singleShot(1000, self._check_registry_freshness)  # レジストリ鮮度チェック
+
+        # バッジ初期化
+        self._on_model_changed(self.model_combo.currentIndex())
 
         # 初期会話を作成
         self._create_new_conversation()
@@ -1014,7 +1142,11 @@ class MainWindow(QMainWindow):
         self.chat_panel = self._build_chat_panel()
         self.main_splitter.addWidget(self.chat_panel)
 
-        # スプリッター初期サイズ
+        # スプリッター比率（2:4:4）と伸縮ファクター
+        self.main_splitter.setStretchFactor(0, 2)  # サイドバー
+        self.main_splitter.setStretchFactor(1, 4)  # タブエリア
+        self.main_splitter.setStretchFactor(2, 4)  # チャットパネル
+        self._splitter_ratios = [0.2, 0.4, 0.4]
         self.main_splitter.setSizes([300, 500, 500])
 
         # ステータスバー
@@ -1024,11 +1156,13 @@ class MainWindow(QMainWindow):
         self.progress = QProgressBar()
         self.progress.setFixedWidth(180)
         self.progress.setFixedHeight(8)
+        self.progress.setToolTip("リクエスト処理中...")
         self.progress.setVisible(False)
         self.status_bar.addPermanentWidget(self.progress)
 
         self._mem_label = QLabel()
         self._mem_label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 11px;")
+        self._mem_label.setToolTip("アプリケーションのメモリ使用量")
         self.status_bar.addPermanentWidget(self._mem_label)
 
         self.status_bar.showMessage("Ready")
@@ -1037,7 +1171,20 @@ class MainWindow(QMainWindow):
         """チャットパネルを構築"""
         panel = QWidget()
         panel.setStyleSheet(f"background-color: {Colors.BG_MAIN};")
-        lay = QVBoxLayout(panel)
+        outer = QVBoxLayout(panel)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # スクロール可能にして小さいウィンドウでも操作可能にする
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(
+            f"QScrollArea {{ background-color: {Colors.BG_MAIN}; border: none; }}"
+        )
+
+        inner = QWidget()
+        lay = QVBoxLayout(inner)
         lay.setContentsMargins(16, 16, 16, 16)
         lay.setSpacing(10)
 
@@ -1049,10 +1196,25 @@ class MainWindow(QMainWindow):
         )
         lay.addWidget(header)
 
+        # ── Model Badge (目立つ表示) ──
+        self.model_badge = ModelBadge()
+        self.model_badge.setToolTip(
+            "現在選択中のモデル\n"
+            "Auto=緑 / Local=黄 / Cloud=青"
+        )
+        lay.addWidget(self.model_badge)
+
         # ── Model Selector ──
         mg = QGroupBox("Model")
         ml = QVBoxLayout(mg)
         self.model_combo = QComboBox()
+        self.model_combo.setToolTip(
+            "使用するモデルを選択\n"
+            "Auto: 入力内容に応じて最適なモデルを自動選択\n"
+            "Local: ローカルLLM（LM Studio等）を使用\n"
+            "Cloud: クラウドAPI（Claude等）を使用\n"
+            "ショートカット: Ctrl+M でモデルを切り替え"
+        )
         self.model_combo.addItem("  Auto (Recommended)", "auto")
         self.model_combo.addItem("  Local LLM", "local")
         self.model_combo.addItem("  Claude API", "claude")
@@ -1062,9 +1224,11 @@ class MainWindow(QMainWindow):
 
         status_row = QHBoxLayout()
         self._status_dot = StatusDot(Colors.SECONDARY)
+        self._status_dot.setToolTip("モデル接続状態（緑=正常 / 黄=切替中 / 赤=エラー）")
         status_row.addWidget(self._status_dot)
         self.model_status = QLabel("Auto routing active")
         self.model_status.setObjectName("status_ok")
+        self.model_status.setToolTip("現在のルーティング状態とフォールバックチェーン")
         status_row.addWidget(self.model_status)
         status_row.addStretch()
 
@@ -1087,6 +1251,11 @@ class MainWindow(QMainWindow):
         pg = QGroupBox("Preset")
         pl = QVBoxLayout(pg)
         self.preset_combo = QComboBox()
+        self.preset_combo.setToolTip(
+            "用途別プリセットを選択\n"
+            "Auto-detect: 入力内容からプリセットを自動判定\n"
+            "各プリセットにはシステムプロンプトと推奨モデルが設定されています"
+        )
         self.preset_combo.addItem("  Auto-detect", None)
         for pid, p in PresetManager.get_all_presets().items():
             self.preset_combo.addItem(f"  {p['icon']}  {p['name']}", pid)
@@ -1105,6 +1274,11 @@ class MainWindow(QMainWindow):
         
         # ドロップエリア
         self.drop_area = ImageDropArea()
+        self.drop_area.setToolTip(
+            "画像をドラッグ＆ドロップ、またはクリックしてファイルを選択\n"
+            "対応形式: PNG, JPG, GIF, BMP, WebP\n"
+            "画像付きの質問はVision対応モデル（Claude）で処理されます"
+        )
         self.drop_area.imageDropped.connect(self._on_image_dropped)
         self.drop_area.imagePasted.connect(self._on_image_pasted)
         img_l.addWidget(self.drop_area)
@@ -1118,11 +1292,13 @@ class MainWindow(QMainWindow):
         btn_layout = QVBoxLayout()
         self.paste_img_btn = QPushButton("📋 Paste")
         self.paste_img_btn.setFixedHeight(32)
+        self.paste_img_btn.setToolTip("クリップボードから画像を貼り付け（スクリーンショット等）")
         self.paste_img_btn.clicked.connect(self._paste_image_from_clipboard)
         btn_layout.addWidget(self.paste_img_btn)
-        
+
         self.clear_img_btn = QPushButton("🗑️ Clear")
         self.clear_img_btn.setFixedHeight(32)
+        self.clear_img_btn.setToolTip("読み込んだ画像をクリア")
         self.clear_img_btn.clicked.connect(self._on_image_cleared)
         self.clear_img_btn.setEnabled(False)
         btn_layout.addWidget(self.clear_img_btn)
@@ -1136,6 +1312,7 @@ class MainWindow(QMainWindow):
         ig = QGroupBox("Input")
         il = QVBoxLayout(ig)
         self.input_text = QPlainTextEdit()
+        self.input_text.setToolTip("質問やタスクを入力（Ctrl+Enter で実行）")
         self.input_text.setPlaceholderText(
             "Type your question or task here...\n\n"
             "Examples:\n"
@@ -1144,8 +1321,8 @@ class MainWindow(QMainWindow):
             "  - Debug this Python code\n"
             "  - Describe this image"
         )
-        self.input_text.setMinimumHeight(120)
-        self.input_text.setMaximumHeight(220)
+        self.input_text.setMinimumHeight(80)
+        self.input_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.input_text.textChanged.connect(self._update_counter)
         il.addWidget(self.input_text)
 
@@ -1157,16 +1334,19 @@ class MainWindow(QMainWindow):
 
         clear_btn = QPushButton("Clear")
         clear_btn.setFixedHeight(28)
+        clear_btn.setToolTip("入力テキストをクリア（Ctrl+L）")
         clear_btn.clicked.connect(self.input_text.clear)
         counter_row.addWidget(clear_btn)
 
         paste_btn = QPushButton("Paste")
         paste_btn.setFixedHeight(28)
+        paste_btn.setToolTip("クリップボードからテキストを貼り付け")
         paste_btn.clicked.connect(self._paste)
         counter_row.addWidget(paste_btn)
 
         load_btn = QPushButton("File")
         load_btn.setFixedHeight(28)
+        load_btn.setToolTip("テキストファイルを読み込み（Ctrl+O）")
         load_btn.clicked.connect(self.load_file)
         counter_row.addWidget(load_btn)
         il.addLayout(counter_row)
@@ -1176,8 +1356,13 @@ class MainWindow(QMainWindow):
         sg = QGroupBox("System Prompt (optional)")
         sl = QVBoxLayout(sg)
         self.system_prompt = QPlainTextEdit()
+        self.system_prompt.setToolTip(
+            "AIの役割や制約を指定するシステムプロンプト（任意）\n"
+            "プリセット選択で自動設定されます"
+        )
         self.system_prompt.setPlaceholderText("Custom role or constraints...")
-        self.system_prompt.setMaximumHeight(80)
+        self.system_prompt.setMinimumHeight(40)
+        self.system_prompt.setMaximumHeight(120)
         sl.addWidget(self.system_prompt)
         lay.addWidget(sg)
 
@@ -1186,6 +1371,7 @@ class MainWindow(QMainWindow):
         self.execute_btn.setObjectName("exec_btn")
         self.execute_btn.setMinimumHeight(52)
         self.execute_btn.setCursor(Qt.PointingHandCursor)
+        self.execute_btn.setToolTip("入力内容をLLMに送信して応答を取得（Ctrl+Enter）")
         self.execute_btn.clicked.connect(self.execute)
         lay.addWidget(self.execute_btn)
 
@@ -1193,11 +1379,15 @@ class MainWindow(QMainWindow):
         self.stop_btn.setObjectName("stop_btn")
         self.stop_btn.setMinimumHeight(52)
         self.stop_btn.setCursor(Qt.PointingHandCursor)
+        self.stop_btn.setToolTip("実行中のリクエストを中止（Esc）")
         self.stop_btn.clicked.connect(self.stop_execution)
         self.stop_btn.setVisible(False)
         lay.addWidget(self.stop_btn)
 
         lay.addStretch()
+
+        scroll.setWidget(inner)
+        outer.addWidget(scroll)
         return panel
 
     # ── Menu ─────────────────────────────────────
@@ -1246,6 +1436,34 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence("Ctrl+W"), self).activated.connect(self._close_current_tab)
         QShortcut(QKeySequence("Ctrl+Tab"), self).activated.connect(self._next_tab)
         QShortcut(QKeySequence("Ctrl+Shift+Tab"), self).activated.connect(self._prev_tab)
+
+    # ── Responsive Resize ────────────────────────
+
+    def resizeEvent(self, event):
+        """ウィンドウリサイズ時にレイアウトを動的調整"""
+        super().resizeEvent(event)
+        w = event.size().width()
+        h = event.size().height()
+
+        # スプリッター比率を維持
+        total = self.main_splitter.width()
+        if total > 0:
+            self.main_splitter.setSizes([
+                int(total * r) for r in self._splitter_ratios
+            ])
+
+        # 小さいウィンドウではサイドバーを自動非表示
+        if w < 1100:
+            if self.conversation_sidebar.isVisible():
+                self.conversation_sidebar.setVisible(False)
+        else:
+            if not self.conversation_sidebar.isVisible():
+                self.conversation_sidebar.setVisible(True)
+
+        # 画像エリアの高さを調整
+        if hasattr(self, 'drop_area'):
+            img_h = max(80, min(160, int(h * 0.12)))
+            self.drop_area.setMaximumHeight(img_h)
 
     # ── Timers ───────────────────────────────────
 
@@ -1543,19 +1761,26 @@ class MainWindow(QMainWindow):
             summary = self._get_fallback_summary()
             if summary:
                 self.model_status.setText(f"Auto: {summary}")
+                self.model_badge.set_model(m, summary)
             else:
                 self.model_status.setText("Auto routing active")
+                self.model_badge.set_model(m, "入力内容に応じて最適なモデルを自動選択")
             self._status_dot.set_color(Colors.SECONDARY)
         elif m.startswith("local:") or m == "local":
-            self.model_status.setText(f"Local: {m.replace('local:', '')}")
+            detail = m.replace('local:', '')
+            self.model_status.setText(f"Local: {detail}")
+            self.model_badge.set_model(m, detail or "ローカルLLM")
             self._status_dot.set_color(Colors.ACCENT)
         elif m.startswith("cloud:") or m == "claude":
-            self.model_status.setText(f"Cloud: {m.replace('cloud:', '')}")
+            detail = m.replace('cloud:', '')
+            self.model_status.setText(f"Cloud: {detail}")
+            self.model_badge.set_model(m, detail or "Claude API")
             self._status_dot.set_color(Colors.CYAN)
         else:
             self.model_status.setText(m)
+            self.model_badge.set_model(m, m)
             self._status_dot.set_color(Colors.CYAN)
-        
+
         # 現在の会話のモデルを更新
         current_id = self.conv_manager.current_conversation_id
         if current_id:
@@ -1695,6 +1920,11 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 0)
         self.status_bar.showMessage("Processing...")
         self.execute_btn.start_pulse()
+        self.model_badge.set_processing(True)
+
+        # 画像がある場合はバッジも更新
+        if has_image:
+            self.model_badge.set_model('claude', 'Vision (Claude)')
 
         # 現在の会話を更新
         current_id = self.conv_manager.current_conversation_id
@@ -1704,6 +1934,13 @@ class MainWindow(QMainWindow):
                 message_count=self.conv_manager.get_conversation(current_id).message_count + 1
             )
             self.conversation_tabs.set_tab_loading(current_id, True)
+
+            # ユーザー入力をタブに表示
+            idx = self.conversation_tabs.get_tab_index(current_id)
+            if idx >= 0:
+                tab_widget = self.conversation_tabs.widget(idx)
+                if hasattr(tab_widget, 'add_message'):
+                    tab_widget.add_message("user", text)
 
         # 画像データを準備
         image_base64 = None
@@ -1727,8 +1964,22 @@ class MainWindow(QMainWindow):
             self._reset_ui()
 
     def _on_finished(self, result):
-        # 現在の会話IDを取得
+        # 実際に使われたモデルをバッジに表示
+        used_model = result.get('model', '')
+        if used_model:
+            self.model_badge.set_detail(f"最後に使用: {used_model}")
+
+        # レスポンスをタブに表示
+        response_text = result.get('response', '')
         current_id = self.conv_manager.current_conversation_id
+        if current_id and response_text:
+            idx = self.conversation_tabs.get_tab_index(current_id)
+            if idx >= 0:
+                tab_widget = self.conversation_tabs.widget(idx)
+                if hasattr(tab_widget, 'add_message'):
+                    tab_widget.add_message("assistant", response_text, used_model)
+
+        # 現在の会話IDを取得（再利用）
 
         # 会話タイトルを自動生成（初回メッセージの場合）
         if current_id:
@@ -1773,6 +2024,9 @@ class MainWindow(QMainWindow):
         self.execute_btn.setVisible(True)
         self.stop_btn.setVisible(False)
         self.progress.setVisible(False)
+        self.model_badge.set_processing(False)
+        # バッジを現在のコンボ選択に戻す
+        self._on_model_changed(self.model_combo.currentIndex())
         self.status_bar.showMessage("Ready")
 
     def _process_next_queued_request(self):
@@ -1890,8 +2144,26 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Error", str(e))
 
     def copy_output(self):
-        # TODO: タブごとの出力をコピー
-        self.status_bar.showMessage("Copied to clipboard", 2000)
+        """現在のタブの会話内容をクリップボードにコピー"""
+        current_id = self.conversation_tabs.get_current_conversation_id()
+        if not current_id:
+            self.status_bar.showMessage("No tab open", 2000)
+            return
+
+        index = self.conversation_tabs.get_tab_index(current_id)
+        if index < 0:
+            return
+
+        tab_widget = self.conversation_tabs.widget(index)
+        if hasattr(tab_widget, 'get_content'):
+            content = tab_widget.get_content()
+            if content.strip():
+                QApplication.clipboard().setText(content)
+                self.status_bar.showMessage("Copied to clipboard", 2000)
+            else:
+                self.status_bar.showMessage("No content to copy", 2000)
+        else:
+            self.status_bar.showMessage("No content to copy", 2000)
 
     # ── Dialogs ──────────────────────────────────
 

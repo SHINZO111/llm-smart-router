@@ -14,17 +14,19 @@ Usage:
 
     registry = ModelRegistry()
     registry.update(results)
+
+Note:
+    runtime_info のみ即座インポート（純粋データクラス、外部依存なし）。
+    scanner, registry, cloud_detector は遅延インポート（aiohttp等の重い依存を回避）。
 """
 
+# runtime_info は純粋データクラスのみ - 即座にインポートしても安全
 from .runtime_info import (
     RuntimeType,
     ModelSource,
     RuntimeInfo,
     DiscoveredModel,
 )
-from .scanner import MultiRuntimeScanner
-from .registry import ModelRegistry
-from .cloud_detector import CloudModelDetector
 
 __version__ = "1.0.0"
 __all__ = [
@@ -36,3 +38,17 @@ __all__ = [
     "ModelRegistry",
     "CloudModelDetector",
 ]
+
+
+def __getattr__(name):
+    """遅延インポート: aiohttp等の重い依存はアクセス時にのみロード"""
+    if name == "MultiRuntimeScanner":
+        from .scanner import MultiRuntimeScanner
+        return MultiRuntimeScanner
+    if name == "ModelRegistry":
+        from .registry import ModelRegistry
+        return ModelRegistry
+    if name == "CloudModelDetector":
+        from .cloud_detector import CloudModelDetector
+        return CloudModelDetector
+    raise AttributeError(f"module 'scanner' has no attribute {name!r}")

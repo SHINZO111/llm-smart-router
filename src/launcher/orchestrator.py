@@ -76,6 +76,19 @@ class LaunchConfig:
     openclaw_enabled: bool = True
     openclaw_timeout: float = 15.0
 
+    # Ollama
+    ollama_enabled: bool = False
+    ollama_timeout: float = 30.0
+    ollama_endpoint: str = "http://localhost:11434"
+    ollama_path: Optional[str] = None
+
+    # llama.cpp
+    llamacpp_enabled: bool = False
+    llamacpp_timeout: float = 30.0
+    llamacpp_endpoint: str = "http://localhost:8080"
+    llamacpp_path: Optional[str] = None
+    llamacpp_model: Optional[str] = None
+
     # Discord Bot
     discord_enabled: bool = True
     discord_timeout: float = 15.0
@@ -103,6 +116,8 @@ class LaunchConfig:
             return cls()
 
         lm = launcher.get("lmstudio", {})
+        ol = launcher.get("ollama", {})
+        lc = launcher.get("llamacpp", {})
         oc = launcher.get("openclaw", {})
         dc = launcher.get("discord", {})
 
@@ -116,6 +131,19 @@ class LaunchConfig:
             lmstudio_path=lm.get("path") or os.environ.get("LM_STUDIO_PATH"),
             model_detect_enabled=bool(lm.get("model_detect", True)),
             model_detect_timeout=float(lm.get("model_detect_timeout", 30.0)),
+            ollama_enabled=bool(ol.get("enabled", False)),
+            ollama_timeout=float(ol.get("timeout", 30.0)),
+            ollama_endpoint=str(ol.get("endpoint",
+                                       os.environ.get("OLLAMA_ENDPOINT",
+                                                       "http://localhost:11434"))),
+            ollama_path=ol.get("path") or os.environ.get("OLLAMA_PATH"),
+            llamacpp_enabled=bool(lc.get("enabled", False)),
+            llamacpp_timeout=float(lc.get("timeout", 30.0)),
+            llamacpp_endpoint=str(lc.get("endpoint",
+                                          os.environ.get("LLAMACPP_ENDPOINT",
+                                                          "http://localhost:8080"))),
+            llamacpp_path=lc.get("path") or os.environ.get("LLAMACPP_PATH"),
+            llamacpp_model=lc.get("model") or os.environ.get("LLAMACPP_MODEL"),
             openclaw_enabled=bool(oc.get("enabled", True)),
             openclaw_timeout=float(oc.get("timeout", 15.0)),
             discord_enabled=bool(dc.get("enabled", True)),
@@ -128,7 +156,7 @@ class LaunchOrchestrator:
     """
     Auto-Launch Chain オーケストレーター
 
-    ステージ: lmstudio_launch → model_detect → openclaw → discord_bot
+    ステージ: lmstudio_launch → ollama_launch → llamacpp_launch → model_detect → openclaw → discord_bot
     各ステージにヘルスチェック・リトライ・タイムアウト・依存関係を持つ。
     on_progress コールバックで GUI/CLI 両対応。
     """
@@ -153,6 +181,8 @@ class LaunchOrchestrator:
         # 内部コンポーネント（遅延初期化）
         self._process_manager = None
         self._lmstudio_launcher = None
+        self._ollama_launcher = None
+        self._llamacpp_launcher = None
 
         # シャットダウンフック登録
         self._shutdown_registered = False
@@ -176,6 +206,29 @@ class LaunchOrchestrator:
                 executable_path=self.config.lmstudio_path,
             )
         return self._lmstudio_launcher
+
+    @property
+    def ollama_launcher(self):
+        """OllamaLauncherを遅延初期化"""
+        if self._ollama_launcher is None:
+            from .ollama_launcher import OllamaLauncher
+            self._ollama_launcher = OllamaLauncher(
+                endpoint=self.config.ollama_endpoint,
+                executable_path=self.config.ollama_path,
+            )
+        return self._ollama_launcher
+
+    @property
+    def llamacpp_launcher(self):
+        """LlamaCppLauncherを遅延初期化"""
+        if self._llamacpp_launcher is None:
+            from .llamacpp_launcher import LlamaCppLauncher
+            self._llamacpp_launcher = LlamaCppLauncher(
+                endpoint=self.config.llamacpp_endpoint,
+                executable_path=self.config.llamacpp_path,
+                model_path=self.config.llamacpp_model,
+            )
+        return self._llamacpp_launcher
 
     def run(self, skip_discord: bool = False) -> List[StageResult]:
         """
@@ -234,6 +287,8 @@ class LaunchOrchestrator:
         """実行ステージリストを構築"""
         return [
             ("lmstudio_launch", self._stage_lmstudio, self.config.lmstudio_enabled),
+            ("ollama_launch", self._stage_ollama, self.config.ollama_enabled),
+            ("llamacpp_launch", self._stage_llamacpp, self.config.llamacpp_enabled),
             ("model_detect", self._stage_model_detect, self.config.model_detect_enabled),
             ("openclaw", self._stage_openclaw, self.config.openclaw_enabled),
             ("discord_bot", self._stage_discord, self.config.discord_enabled and not skip_discord),
@@ -296,6 +351,36 @@ class LaunchOrchestrator:
                 time.sleep(3)
 
         return False, f"LM Studio起動失敗 ({retry}回試行)"
+
+    def _stage_ollama(self) -> tuple:
+        """Ollama起動ステージ"""
+        launcher = self.ollama_launcher
+        logger.info("Ollama起動中...")
+
+        success = launcher.launch(
+            process_manager=self.process_manager,
+            wait_ready=True,
+            ready_timeout=self.config.ollama_timeout,
+        )
+
+        if success:
+            return True, "Ollama API応答確認"
+        return False, "Ollama起動失敗"
+
+    def _stage_llamacpp(self) -> tuple:
+        """llama.cpp起動ステージ"""
+        launcher = self.llamacpp_launcher
+        logger.info("llama.cpp起動中...")
+
+        success = launcher.launch(
+            process_manager=self.process_manager,
+            wait_ready=True,
+            ready_timeout=self.config.llamacpp_timeout,
+        )
+
+        if success:
+            return True, "llama.cpp API応答確認"
+        return False, "llama.cpp起動失敗"
 
     def _stage_model_detect(self) -> tuple:
         """モデル検出ステージ（マルチランタイム対応）"""

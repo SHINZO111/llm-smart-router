@@ -62,6 +62,9 @@ class SettingsDialog(QDialog):
         # 優先順位タブ
         self.tabs.addTab(self.create_priority_tab(), "📊 優先順位")
 
+        # ランタイム管理タブ
+        self.tabs.addTab(self.create_runtime_tab(), "🚀 ランタイム")
+
         # OpenClaw連携タブ
         self.tabs.addTab(self.create_openclaw_tab(), "🔗 OpenClaw")
 
@@ -92,6 +95,7 @@ class SettingsDialog(QDialog):
         
         self.anthropic_key = QLineEdit()
         self.anthropic_key.setEchoMode(QLineEdit.Password)
+        self.anthropic_key.setToolTip("Anthropic APIキーを入力（OSキーストアに暗号化保存されます）")
         self.anthropic_key.setPlaceholderText("sk-ant-api03-...")
         anthropic_layout.addRow("APIキー:", self.anthropic_key)
         
@@ -100,14 +104,17 @@ class SettingsDialog(QDialog):
         
         self.show_key_btn = QPushButton("👁️ 表示")
         self.show_key_btn.setCheckable(True)
+        self.show_key_btn.setToolTip("APIキーの表示/非表示を切り替え")
         self.show_key_btn.toggled.connect(self.toggle_key_visibility)
         key_buttons.addWidget(self.show_key_btn)
-        
+
         self.test_key_btn = QPushButton("🧪 接続テスト")
+        self.test_key_btn.setToolTip("Anthropic APIに接続テストを実行してキーの有効性を確認")
         self.test_key_btn.clicked.connect(self.test_anthropic_key)
         key_buttons.addWidget(self.test_key_btn)
-        
+
         self.delete_key_btn = QPushButton("🗑️ 削除")
+        self.delete_key_btn.setToolTip("保存済みのAPIキーをキーストアから削除")
         self.delete_key_btn.clicked.connect(self.delete_anthropic_key)
         key_buttons.addWidget(self.delete_key_btn)
         
@@ -156,12 +163,14 @@ class SettingsDialog(QDialog):
         path_layout = QFormLayout(path_group)
         
         self.router_path = QLineEdit()
+        self.router_path.setToolTip("router.jsがあるプロジェクトルートディレクトリのパス")
         self.router_path.setText(self.settings.value('router_path', 'F:\\llm-smart-router'))
         
         path_buttons = QHBoxLayout()
         path_buttons.addWidget(self.router_path)
         
         browse_btn = QPushButton("📂 参照")
+        browse_btn.setToolTip("ディレクトリ選択ダイアログを開く")
         browse_btn.clicked.connect(self.browse_router_path)
         path_buttons.addWidget(browse_btn)
         
@@ -174,12 +183,17 @@ class SettingsDialog(QDialog):
         default_layout = QFormLayout(default_group)
         
         self.default_model = QComboBox()
+        self.default_model.setToolTip("新しい会話で使用するデフォルトのモデル")
         self.default_model.addItem("🧠 自動判定", "auto")
         self.default_model.addItem("🏠 ローカル", "local")
         self.default_model.addItem("☁️ クラウド", "cloud")
         default_layout.addRow("デフォルトモデル:", self.default_model)
         
         self.confidence_threshold = QDoubleSpinBox()
+        self.confidence_threshold.setToolTip(
+            "インテリジェントトリアージの確信度閾値（0.0〜1.0）\n"
+            "この値以上の確信度でモデルが推薦された場合にそのモデルを使用"
+        )
         self.confidence_threshold.setRange(0.0, 1.0)
         self.confidence_threshold.setSingleStep(0.05)
         self.confidence_threshold.setValue(0.75)
@@ -193,9 +207,11 @@ class SettingsDialog(QDialog):
         
         self.cost_notify = QCheckBox("有効")
         self.cost_notify.setChecked(True)
+        self.cost_notify.setToolTip("クラウドAPI使用時にコスト警告を表示するかどうか")
         cost_layout.addRow("コスト通知:", self.cost_notify)
-        
+
         self.cost_threshold = QSpinBox()
+        self.cost_threshold.setToolTip("この金額を超えた場合に警告を表示")
         self.cost_threshold.setRange(1, 1000)
         self.cost_threshold.setSuffix(" ¥")
         self.cost_threshold.setValue(50)
@@ -208,12 +224,14 @@ class SettingsDialog(QDialog):
         perf_layout = QFormLayout(perf_group)
         
         self.local_timeout = QSpinBox()
+        self.local_timeout.setToolTip("ローカルLLMの応答を待つ最大時間")
         self.local_timeout.setRange(10, 300)
         self.local_timeout.setSuffix(" 秒")
         self.local_timeout.setValue(30)
         perf_layout.addRow("ローカルタイムアウト:", self.local_timeout)
-        
+
         self.cloud_timeout = QSpinBox()
+        self.cloud_timeout.setToolTip("クラウドAPIの応答を待つ最大時間")
         self.cloud_timeout.setRange(10, 300)
         self.cloud_timeout.setSuffix(" 秒")
         self.cloud_timeout.setValue(60)
@@ -476,6 +494,10 @@ class SettingsDialog(QDialog):
         list_row = QHBoxLayout()
 
         self.priority_list = QListWidget()
+        self.priority_list.setToolTip(
+            "ドラッグ＆ドロップ、または↑↓ボタンで順序を変更\n"
+            "上から順にモデルを試行し、成功したら応答を返します"
+        )
         self.priority_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.priority_list.setDefaultDropAction(Qt.MoveAction)
         self.priority_list.setStyleSheet(
@@ -491,11 +513,13 @@ class SettingsDialog(QDialog):
         btn_col.addStretch()
 
         up_btn = QPushButton("↑ 上へ")
+        up_btn.setToolTip("選択したモデルの優先順位を上げる")
         up_btn.setFixedWidth(80)
         up_btn.clicked.connect(self._priority_move_up)
         btn_col.addWidget(up_btn)
 
         down_btn = QPushButton("↓ 下へ")
+        down_btn.setToolTip("選択したモデルの優先順位を下げる")
         down_btn.setFixedWidth(80)
         down_btn.clicked.connect(self._priority_move_down)
         btn_col.addWidget(down_btn)
@@ -503,6 +527,7 @@ class SettingsDialog(QDialog):
         btn_col.addSpacing(20)
 
         reset_btn = QPushButton("🔄 リセット")
+        reset_btn.setToolTip("デフォルトの優先順位に戻す")
         reset_btn.setFixedWidth(80)
         reset_btn.clicked.connect(self._priority_reset)
         btn_col.addWidget(reset_btn)
@@ -681,6 +706,378 @@ class SettingsDialog(QDialog):
                 raise
         except OSError as e:
             QMessageBox.warning(self, "エラー", f"優先順位の保存に失敗: {e}")
+
+    def create_runtime_tab(self):
+        """ランタイム管理タブ（Ollama / llama.cpp）"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        desc = QLabel(
+            "ローカルLLMランタイムの起動・停止とモデル管理を行います。"
+        )
+        desc.setStyleSheet("color: #6366f1; padding: 10px;")
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        # ---- Ollama セクション ----
+        ollama_group = QGroupBox("🦙 Ollama")
+        ollama_layout = QVBoxLayout(ollama_group)
+
+        # ステータスとエンドポイント
+        ollama_form = QFormLayout()
+
+        ollama_status_row = QHBoxLayout()
+        self.ollama_status_dot = QLabel("●")
+        self.ollama_status_dot.setStyleSheet("color: #6c7086; font-size: 14px;")
+        self.ollama_status_label = QLabel("未確認")
+        self.ollama_status_label.setStyleSheet("color: #a6adc8;")
+        ollama_status_row.addWidget(self.ollama_status_dot)
+        ollama_status_row.addWidget(self.ollama_status_label)
+        ollama_status_row.addStretch()
+        ollama_form.addRow("ステータス:", ollama_status_row)
+
+        self.ollama_endpoint = QLineEdit()
+        self.ollama_endpoint.setText(
+            self.settings.value("runtime/ollama_endpoint", "http://localhost:11434")
+        )
+        self.ollama_endpoint.setToolTip("Ollama APIのエンドポイントURL")
+        ollama_form.addRow("エンドポイント:", self.ollama_endpoint)
+
+        ollama_layout.addLayout(ollama_form)
+
+        # 起動/停止ボタン
+        ollama_btns = QHBoxLayout()
+        self.ollama_start_btn = QPushButton("▶ 起動")
+        self.ollama_start_btn.setToolTip("Ollamaサーバーを起動 (ollama serve)")
+        self.ollama_start_btn.clicked.connect(self._ollama_start)
+        ollama_btns.addWidget(self.ollama_start_btn)
+
+        self.ollama_stop_btn = QPushButton("■ 停止")
+        self.ollama_stop_btn.setToolTip("Ollamaサーバーを停止")
+        self.ollama_stop_btn.clicked.connect(self._ollama_stop)
+        ollama_btns.addWidget(self.ollama_stop_btn)
+
+        self.ollama_check_btn = QPushButton("🔍 確認")
+        self.ollama_check_btn.setToolTip("Ollamaの接続状態を確認")
+        self.ollama_check_btn.clicked.connect(self._ollama_check_status)
+        ollama_btns.addWidget(self.ollama_check_btn)
+        ollama_btns.addStretch()
+        ollama_layout.addLayout(ollama_btns)
+
+        # モデル管理
+        models_label = QLabel("モデル一覧:")
+        models_label.setStyleSheet("font-weight: bold; margin-top: 8px;")
+        ollama_layout.addWidget(models_label)
+
+        self.ollama_model_list = QListWidget()
+        self.ollama_model_list.setMaximumHeight(120)
+        self.ollama_model_list.setStyleSheet(
+            "QListWidget { background: #1e1e2e; color: #cdd6f4; border: 1px solid #45475a;"
+            " border-radius: 6px; font-size: 12px; padding: 4px; }"
+            " QListWidget::item { padding: 4px 8px; }"
+        )
+        ollama_layout.addWidget(self.ollama_model_list)
+
+        model_btns = QHBoxLayout()
+        self.ollama_refresh_btn = QPushButton("🔄 更新")
+        self.ollama_refresh_btn.setToolTip("Ollamaのモデル一覧を更新")
+        self.ollama_refresh_btn.clicked.connect(self._ollama_refresh_models)
+        model_btns.addWidget(self.ollama_refresh_btn)
+
+        self.ollama_pull_btn = QPushButton("📥 Pull")
+        self.ollama_pull_btn.setToolTip("新しいモデルをダウンロード")
+        self.ollama_pull_btn.clicked.connect(self._ollama_pull_model)
+        model_btns.addWidget(self.ollama_pull_btn)
+
+        self.ollama_delete_btn = QPushButton("🗑️ 削除")
+        self.ollama_delete_btn.setToolTip("選択したモデルを削除")
+        self.ollama_delete_btn.clicked.connect(self._ollama_delete_model)
+        model_btns.addWidget(self.ollama_delete_btn)
+        model_btns.addStretch()
+        ollama_layout.addLayout(model_btns)
+
+        self.ollama_progress = QProgressBar()
+        self.ollama_progress.setVisible(False)
+        self.ollama_progress.setTextVisible(True)
+        ollama_layout.addWidget(self.ollama_progress)
+
+        layout.addWidget(ollama_group)
+
+        # ---- llama.cpp セクション ----
+        llamacpp_group = QGroupBox("🦙 llama.cpp")
+        llamacpp_layout = QVBoxLayout(llamacpp_group)
+
+        llamacpp_form = QFormLayout()
+
+        llamacpp_status_row = QHBoxLayout()
+        self.llamacpp_status_dot = QLabel("●")
+        self.llamacpp_status_dot.setStyleSheet("color: #6c7086; font-size: 14px;")
+        self.llamacpp_status_label = QLabel("未確認")
+        self.llamacpp_status_label.setStyleSheet("color: #a6adc8;")
+        llamacpp_status_row.addWidget(self.llamacpp_status_dot)
+        llamacpp_status_row.addWidget(self.llamacpp_status_label)
+        llamacpp_status_row.addStretch()
+        llamacpp_form.addRow("ステータス:", llamacpp_status_row)
+
+        self.llamacpp_endpoint = QLineEdit()
+        self.llamacpp_endpoint.setText(
+            self.settings.value("runtime/llamacpp_endpoint", "http://localhost:8080")
+        )
+        self.llamacpp_endpoint.setToolTip("llama.cpp APIのエンドポイントURL")
+        llamacpp_form.addRow("エンドポイント:", self.llamacpp_endpoint)
+
+        self.llamacpp_model_path = QLineEdit()
+        self.llamacpp_model_path.setText(
+            self.settings.value("runtime/llamacpp_model_path", "")
+        )
+        self.llamacpp_model_path.setPlaceholderText("起動時にロードするGGUFファイルのパス")
+
+        model_path_row = QHBoxLayout()
+        model_path_row.addWidget(self.llamacpp_model_path)
+        llamacpp_browse = QPushButton("📂")
+        llamacpp_browse.setFixedWidth(40)
+        llamacpp_browse.setToolTip("GGUFモデルファイルを選択")
+        llamacpp_browse.clicked.connect(self._llamacpp_browse_model)
+        model_path_row.addWidget(llamacpp_browse)
+        llamacpp_form.addRow("モデルファイル:", model_path_row)
+
+        llamacpp_layout.addLayout(llamacpp_form)
+
+        # 起動/停止ボタン
+        llamacpp_btns = QHBoxLayout()
+        self.llamacpp_start_btn = QPushButton("▶ 起動")
+        self.llamacpp_start_btn.setToolTip("llama-serverを起動")
+        self.llamacpp_start_btn.clicked.connect(self._llamacpp_start)
+        llamacpp_btns.addWidget(self.llamacpp_start_btn)
+
+        self.llamacpp_stop_btn = QPushButton("■ 停止")
+        self.llamacpp_stop_btn.setToolTip("llama-serverを停止")
+        self.llamacpp_stop_btn.clicked.connect(self._llamacpp_stop)
+        llamacpp_btns.addWidget(self.llamacpp_stop_btn)
+
+        self.llamacpp_check_btn = QPushButton("🔍 確認")
+        self.llamacpp_check_btn.setToolTip("llama.cppの接続状態を確認")
+        self.llamacpp_check_btn.clicked.connect(self._llamacpp_check_status)
+        llamacpp_btns.addWidget(self.llamacpp_check_btn)
+        llamacpp_btns.addStretch()
+        llamacpp_layout.addLayout(llamacpp_btns)
+
+        layout.addWidget(llamacpp_group)
+
+        layout.addStretch()
+
+        # 初期ステータスチェック
+        self._ollama_check_status()
+        self._llamacpp_check_status()
+
+        return widget
+
+    # ---- Ollama ランタイム操作 ----
+
+    def _get_ollama_launcher(self):
+        """OllamaLauncherインスタンスを返す"""
+        from launcher.ollama_launcher import OllamaLauncher
+        endpoint = self.ollama_endpoint.text().strip() or "http://localhost:11434"
+        return OllamaLauncher(endpoint=endpoint)
+
+    def _get_ollama_client(self):
+        """OllamaClientインスタンスを返す"""
+        from models.ollama_client import OllamaClient
+        endpoint = self.ollama_endpoint.text().strip() or "http://localhost:11434"
+        return OllamaClient(base_url=endpoint)
+
+    def _update_ollama_status(self, running: bool):
+        """Ollamaステータス表示を更新"""
+        if running:
+            self.ollama_status_dot.setStyleSheet("color: #10b981; font-size: 14px;")
+            self.ollama_status_label.setText("Running")
+            self.ollama_status_label.setStyleSheet("color: #10b981;")
+        else:
+            self.ollama_status_dot.setStyleSheet("color: #6c7086; font-size: 14px;")
+            self.ollama_status_label.setText("Stopped")
+            self.ollama_status_label.setStyleSheet("color: #a6adc8;")
+
+    def _ollama_check_status(self):
+        """Ollamaの接続状態を確認"""
+        launcher = self._get_ollama_launcher()
+        ready = launcher.is_api_ready(timeout=2.0)
+        self._update_ollama_status(ready)
+        if ready:
+            self._ollama_refresh_models()
+
+    def _ollama_start(self):
+        """Ollamaサーバーを起動"""
+        launcher = self._get_ollama_launcher()
+        if launcher.is_api_ready(timeout=2.0):
+            QMessageBox.information(self, "Ollama", "Ollamaは既に起動しています")
+            self._update_ollama_status(True)
+            return
+
+        self.ollama_start_btn.setEnabled(False)
+        self.ollama_start_btn.setText("起動中...")
+
+        success = launcher.launch(wait_ready=True, ready_timeout=15.0)
+
+        self.ollama_start_btn.setEnabled(True)
+        self.ollama_start_btn.setText("▶ 起動")
+
+        if success:
+            self._update_ollama_status(True)
+            self._ollama_refresh_models()
+            QMessageBox.information(self, "Ollama", "Ollamaを起動しました")
+        else:
+            self._update_ollama_status(False)
+            QMessageBox.warning(self, "Ollama", "Ollamaの起動に失敗しました")
+
+    def _ollama_stop(self):
+        """Ollamaサーバーを停止"""
+        launcher = self._get_ollama_launcher()
+        launcher.stop()
+        self._update_ollama_status(False)
+        self.ollama_model_list.clear()
+
+    def _ollama_refresh_models(self):
+        """Ollamaモデル一覧を更新"""
+        self.ollama_model_list.clear()
+        client = self._get_ollama_client()
+        models = client.list_models()
+        for m in models:
+            name = m.get("name", "unknown")
+            size_bytes = m.get("size", 0)
+            size_gb = size_bytes / (1024 ** 3) if size_bytes else 0
+            display = f"{name}  ({size_gb:.1f} GB)" if size_gb > 0 else name
+            item = QListWidgetItem(display)
+            item.setData(Qt.UserRole, name)
+            self.ollama_model_list.addItem(item)
+
+    def _ollama_pull_model(self):
+        """Ollamaモデルをダウンロード"""
+        from PySide6.QtWidgets import QInputDialog
+
+        name, ok = QInputDialog.getText(
+            self, "モデルPull", "ダウンロードするモデル名を入力:",
+            text="tinyllama"
+        )
+        if not ok or not name.strip():
+            return
+
+        name = name.strip()
+        client = self._get_ollama_client()
+        if not client.is_available():
+            QMessageBox.warning(self, "Ollama", "Ollamaが応答していません")
+            return
+
+        self.ollama_progress.setVisible(True)
+        self.ollama_progress.setFormat(f"Pulling {name}... %p%")
+        self.ollama_progress.setValue(0)
+        self.ollama_pull_btn.setEnabled(False)
+
+        def on_progress(status, completed, total):
+            if total > 0:
+                pct = int(completed * 100 / total)
+                self.ollama_progress.setValue(pct)
+                self.ollama_progress.setFormat(f"{status} %p%")
+
+        import threading
+
+        def _do_pull():
+            success = client.pull_model(name, on_progress=on_progress)
+            # UI更新はメインスレッドで行う必要があるがシンプルに直接更新
+            self.ollama_pull_btn.setEnabled(True)
+            self.ollama_progress.setVisible(False)
+            if success:
+                self._ollama_refresh_models()
+
+        thread = threading.Thread(target=_do_pull, daemon=True)
+        thread.start()
+
+    def _ollama_delete_model(self):
+        """選択したOllamaモデルを削除"""
+        current = self.ollama_model_list.currentItem()
+        if not current:
+            QMessageBox.warning(self, "Ollama", "削除するモデルを選択してください")
+            return
+
+        name = current.data(Qt.UserRole)
+        reply = QMessageBox.question(
+            self, "確認",
+            f"モデル '{name}' を削除しますか？",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        client = self._get_ollama_client()
+        if client.delete_model(name):
+            self._ollama_refresh_models()
+            QMessageBox.information(self, "Ollama", f"モデル '{name}' を削除しました")
+        else:
+            QMessageBox.warning(self, "Ollama", "モデルの削除に失敗しました")
+
+    # ---- llama.cpp ランタイム操作 ----
+
+    def _get_llamacpp_launcher(self):
+        """LlamaCppLauncherインスタンスを返す"""
+        from launcher.llamacpp_launcher import LlamaCppLauncher
+        endpoint = self.llamacpp_endpoint.text().strip() or "http://localhost:8080"
+        model_path = self.llamacpp_model_path.text().strip() or None
+        return LlamaCppLauncher(endpoint=endpoint, model_path=model_path)
+
+    def _update_llamacpp_status(self, running: bool):
+        """llama.cppステータス表示を更新"""
+        if running:
+            self.llamacpp_status_dot.setStyleSheet("color: #10b981; font-size: 14px;")
+            self.llamacpp_status_label.setText("Running")
+            self.llamacpp_status_label.setStyleSheet("color: #10b981;")
+        else:
+            self.llamacpp_status_dot.setStyleSheet("color: #6c7086; font-size: 14px;")
+            self.llamacpp_status_label.setText("Stopped")
+            self.llamacpp_status_label.setStyleSheet("color: #a6adc8;")
+
+    def _llamacpp_check_status(self):
+        """llama.cppの接続状態を確認"""
+        launcher = self._get_llamacpp_launcher()
+        ready = launcher.is_api_ready(timeout=2.0)
+        self._update_llamacpp_status(ready)
+
+    def _llamacpp_start(self):
+        """llama-serverを起動"""
+        launcher = self._get_llamacpp_launcher()
+        if launcher.is_api_ready(timeout=2.0):
+            QMessageBox.information(self, "llama.cpp", "llama-serverは既に起動しています")
+            self._update_llamacpp_status(True)
+            return
+
+        self.llamacpp_start_btn.setEnabled(False)
+        self.llamacpp_start_btn.setText("起動中...")
+
+        success = launcher.launch(wait_ready=True, ready_timeout=15.0)
+
+        self.llamacpp_start_btn.setEnabled(True)
+        self.llamacpp_start_btn.setText("▶ 起動")
+
+        if success:
+            self._update_llamacpp_status(True)
+            QMessageBox.information(self, "llama.cpp", "llama-serverを起動しました")
+        else:
+            self._update_llamacpp_status(False)
+            QMessageBox.warning(self, "llama.cpp", "llama-serverの起動に失敗しました")
+
+    def _llamacpp_stop(self):
+        """llama-serverを停止"""
+        launcher = self._get_llamacpp_launcher()
+        launcher.stop()
+        self._update_llamacpp_status(False)
+
+    def _llamacpp_browse_model(self):
+        """GGUFモデルファイルを選択"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "GGUFモデルファイルを選択",
+            "",
+            "GGUF Files (*.gguf);;All Files (*)"
+        )
+        if path:
+            self.llamacpp_model_path.setText(path)
 
     def create_openclaw_tab(self):
         """OpenClaw連携タブ"""
@@ -915,6 +1312,11 @@ class SettingsDialog(QDialog):
 
         # 優先順位保存
         self._save_priority()
+
+        # ランタイム設定保存
+        self.settings.setValue('runtime/ollama_endpoint', self.ollama_endpoint.text())
+        self.settings.setValue('runtime/llamacpp_endpoint', self.llamacpp_endpoint.text())
+        self.settings.setValue('runtime/llamacpp_model_path', self.llamacpp_model_path.text())
 
         # OpenClaw連携設定保存
         self.settings.setValue('openclaw/auto_sync', self.openclaw_auto_sync.isChecked())

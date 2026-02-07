@@ -312,6 +312,21 @@ launcher:
     # path: null        # LM Studio実行ファイルパス（自動検出）
     # endpoint: "http://localhost:1234/v1"  # 環境変数 LM_STUDIO_ENDPOINT で上書き可
 
+  # Ollama 自動起動
+  ollama:
+    enabled: false        # デフォルト無効（Ollamaインストール後に有効化）
+    timeout: 30.0         # API応答待ちタイムアウト（秒）
+    # endpoint: "http://localhost:11434"  # 環境変数 OLLAMA_ENDPOINT で上書き可
+    # path: null          # ollama実行ファイルパス（自動検出）
+
+  # llama.cpp 自動起動
+  llamacpp:
+    enabled: false        # デフォルト無効（llama-serverインストール後に有効化）
+    timeout: 30.0         # API応答待ちタイムアウト（秒）
+    # endpoint: "http://localhost:8080"  # 環境変数 LLAMACPP_ENDPOINT で上書き可
+    # path: null          # llama-server実行ファイルパス（自動検出）
+    # model: null         # 起動時にロードするGGUFモデルファイルパス
+
   # OpenClaw 統合
   openclaw:
     enabled: true
