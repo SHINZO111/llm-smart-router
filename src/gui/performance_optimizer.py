@@ -37,6 +37,9 @@ from PySide6.QtCore import (
     Qt, QObject, Signal, Slot, QThread, QTimer,
     QRunnable, QThreadPool, QMetaObject, Q_ARG
 )
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from gui.design_tokens import Colors, Spacing, Radius, Typography
 from PySide6.QtGui import QKeySequence, QAction, QShortcut
 
 
@@ -274,7 +277,7 @@ class ErrorHandler:
         'CONNECTION': {
             'icon': '🔌',
             'title': '接続エラー',
-            'color': '#ef4444',
+            'color': Colors.DANGER,
             'suggestions': [
                 'インターネット接続を確認してください',
                 'ファイアウォール設定を確認してください',
@@ -284,7 +287,7 @@ class ErrorHandler:
         'AUTH': {
             'icon': '🔐',
             'title': '認証エラー',
-            'color': '#f59e0b',
+            'color': Colors.WARNING,
             'suggestions': [
                 'APIキーが正しく設定されているか確認してください',
                 '設定 → APIキー でキーを再設定してください',
@@ -294,7 +297,7 @@ class ErrorHandler:
         'TIMEOUT': {
             'icon': '⏱️',
             'title': 'タイムアウト',
-            'color': '#f59e0b',
+            'color': Colors.WARNING,
             'suggestions': [
                 'ネットワーク環境が混雑していないか確認してください',
                 'リクエストサイズを小さくしてみてください',
@@ -304,7 +307,7 @@ class ErrorHandler:
         'MODEL': {
             'icon': '🤖',
             'title': 'モデルエラー',
-            'color': '#6366f1',
+            'color': Colors.PRIMARY,
             'suggestions': [
                 'モデル選択を変更してみてください',
                 'ローカルLLMが起動しているか確認してください',
@@ -314,7 +317,7 @@ class ErrorHandler:
         'RESOURCE': {
             'icon': '💾',
             'title': 'リソース不足',
-            'color': '#ef4444',
+            'color': Colors.DANGER,
             'suggestions': [
                 '不要なアプリケーションを終了してください',
                 'ディスク容量を確認してください',
@@ -324,7 +327,7 @@ class ErrorHandler:
         'UNKNOWN': {
             'icon': '❓',
             'title': '予期しないエラー',
-            'color': '#6b7280',
+            'color': Colors.TEXT_MUTED,
             'suggestions': [
                 'アプリケーションを再起動してください',
                 'ログを確認してください',
@@ -466,7 +469,7 @@ class ErrorDialog(QDialog):
         # エラーメッセージ
         msg_label = QLabel(f"<b>エラー内容:</b><br>{self.error_info['message']}")
         msg_label.setWordWrap(True)
-        msg_label.setStyleSheet("padding: 10px; background-color: #2d2d2d; border-radius: 6px;")
+        msg_label.setStyleSheet(f"padding: {Spacing.MD}px; background-color: {Colors.SURFACE_2}; border-radius: {Radius.MD}px;")
         layout.addWidget(msg_label)
         
         # 対処方法
@@ -475,7 +478,7 @@ class ErrorDialog(QDialog):
         
         for suggestion in self.category_info['suggestions']:
             suggestion_label = QLabel(f"  • {suggestion}")
-            suggestion_label.setStyleSheet("color: #10b981; padding: 4px;")
+            suggestion_label.setStyleSheet(f"color: {Colors.SECONDARY}; padding: {Spacing.XS}px;")
             layout.addWidget(suggestion_label)
         
         # 詳細情報（折りたたみ可能）
@@ -703,7 +706,7 @@ class QuickHelpDialog(QDialog):
         
         # タイトル
         title = QLabel("⌨️ キーボードショートカット一覧")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #6366f1;")
+        title.setStyleSheet(f"font-size: {Typography.SIZE_XL}px; font-weight: bold; color: {Colors.PRIMARY};")
         layout.addWidget(title)
         
         # ショートカット一覧
@@ -720,7 +723,7 @@ class QuickHelpDialog(QDialog):
         
         for cat_name, keys in categories:
             group = QLabel(f"<b>{cat_name}</b>")
-            group.setStyleSheet("color: #10b981; margin-top: 10px;")
+            group.setStyleSheet(f"color: {Colors.SECONDARY}; margin-top: {Spacing.MD}px;")
             layout.addWidget(group)
             
             for key in keys:

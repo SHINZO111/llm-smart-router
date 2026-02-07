@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QAction, QFont, QColor
 
+from gui.design_tokens import Colors, Spacing, Radius, Typography, L10n
+
 
 # ============================================================
 # データモデル
@@ -129,12 +131,12 @@ class ConversationListItem(QFrame):
         info_layout.setSpacing(8)
         
         date_label = QLabel(f"{self.conversation.date_display} • {self.conversation.message_count} msgs")
-        date_label.setStyleSheet("color: #64748b; font-size: 11px;")
+        date_label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 11px;")
         info_layout.addWidget(date_label)
         
         # モデル名
         model_label = QLabel(self.conversation.model.capitalize())
-        model_label.setStyleSheet("color: #6366f1; font-size: 10px; background: #6366f120; padding: 1px 6px; border-radius: 4px;")
+        model_label.setStyleSheet(f"color: {Colors.PRIMARY}; font-size: 10px; background: {Colors.PRIMARY_GLOW}; padding: 1px 6px; border-radius: 4px;")
         info_layout.addWidget(model_label)
         
         info_layout.addStretch()
@@ -145,13 +147,13 @@ class ConversationListItem(QFrame):
     def _update_style(self):
         """スタイルを更新"""
         if self._is_selected:
-            bg = "#6366f1"
-            border = "#6366f1"
+            bg = Colors.PRIMARY
+            border = Colors.PRIMARY
             title_color = "#ffffff"
         else:
             bg = "transparent"
             border = "transparent"
-            title_color = "#eef2ff"
+            title_color = Colors.TEXT
         
         self.setStyleSheet(f"""
             ConversationListItem {{
@@ -160,8 +162,8 @@ class ConversationListItem(QFrame):
                 border-radius: 8px;
             }}
             ConversationListItem:hover {{
-                background-color: {'#6366f130' if not self._is_selected else bg};
-                border-color: {'#6366f1' if not self._is_selected else border};
+                background-color: {Colors.PRIMARY_GLOW if not self._is_selected else bg};
+                border-color: {Colors.PRIMARY if not self._is_selected else border};
             }}
         """)
         self.title_label.setStyleSheet(f"font-weight: 500; font-size: 13px; color: {title_color};")
@@ -213,34 +215,34 @@ class ConversationSidebar(QWidget):
         
         # ── ヘッダー ──
         header = QWidget()
-        header.setStyleSheet("background-color: #161625; border-bottom: 1px solid #252540;")
+        header.setStyleSheet(f"background-color: {Colors.SURFACE_2}; border-bottom: 1px solid {Colors.BORDER};")
         header_layout = QVBoxLayout(header)
         header_layout.setContentsMargins(12, 12, 12, 12)
         header_layout.setSpacing(10)
         
         # タイトル行
         title_row = QHBoxLayout()
-        title_label = QLabel("💬 Conversations")
-        title_label.setStyleSheet("color: #818cf8; font-size: 14px; font-weight: 700;")
+        title_label = QLabel("💬 会話一覧")
+        title_label.setStyleSheet(f"color: {Colors.PRIMARY_LIGHT}; font-size: 14px; font-weight: 700;")
         title_row.addWidget(title_label)
         title_row.addStretch()
         
         # 新規会話ボタン
-        self.new_btn = QPushButton("+ New")
+        self.new_btn = QPushButton("+ 新規")
         self.new_btn.setToolTip("新しい会話を作成（Ctrl+N）")
-        self.new_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #6366f1;
+        self.new_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {Colors.PRIMARY};
                 color: white;
                 border: none;
                 border-radius: 6px;
                 padding: 6px 14px;
                 font-size: 12px;
                 font-weight: 600;
-            }
-            QPushButton:hover {
-                background-color: #818cf8;
-            }
+            }}
+            QPushButton:hover {{
+                background-color: {Colors.PRIMARY_LIGHT};
+            }}
         """)
         self.new_btn.setCursor(Qt.PointingHandCursor)
         self.new_btn.clicked.connect(self.conversation_new_requested.emit)
@@ -249,32 +251,32 @@ class ConversationSidebar(QWidget):
         
         # ── 検索ボックス ──
         search_container = QFrame()
-        search_container.setStyleSheet("""
-            QFrame {
-                background-color: #12121f;
-                border: 1px solid #252540;
+        search_container.setStyleSheet(f"""
+            QFrame {{
+                background-color: {Colors.BG_INPUT};
+                border: 1px solid {Colors.BORDER};
                 border-radius: 8px;
-            }
+            }}
         """)
         search_layout = QHBoxLayout(search_container)
         search_layout.setContentsMargins(8, 4, 8, 4)
         search_layout.setSpacing(6)
         
         search_icon = QLabel("🔍")
-        search_icon.setStyleSheet("color: #64748b;")
+        search_icon.setStyleSheet(f"color: {Colors.TEXT_MUTED};")
         search_layout.addWidget(search_icon)
         
         self.search_input = QLineEdit()
         self.search_input.setToolTip("会話タイトルで検索")
-        self.search_input.setPlaceholderText("Search conversations...")
-        self.search_input.setStyleSheet("""
-            QLineEdit {
+        self.search_input.setPlaceholderText("会話を検索...")
+        self.search_input.setStyleSheet(f"""
+            QLineEdit {{
                 background: transparent;
                 border: none;
-                color: #eef2ff;
+                color: {Colors.TEXT};
                 font-size: 13px;
                 padding: 4px 0;
-            }
+            }}
         """)
         self.search_input.textChanged.connect(self._on_search_changed)
         search_layout.addWidget(self.search_input, 1)
@@ -282,16 +284,16 @@ class ConversationSidebar(QWidget):
         self.clear_search_btn = QPushButton("✕")
         self.clear_search_btn.setToolTip("検索をクリア")
         self.clear_search_btn.setFixedSize(20, 20)
-        self.clear_search_btn.setStyleSheet("""
-            QPushButton {
+        self.clear_search_btn.setStyleSheet(f"""
+            QPushButton {{
                 background: transparent;
                 border: none;
-                color: #64748b;
+                color: {Colors.TEXT_MUTED};
                 font-size: 12px;
-            }
-            QPushButton:hover {
-                color: #ef4444;
-            }
+            }}
+            QPushButton:hover {{
+                color: {Colors.DANGER};
+            }}
         """)
         self.clear_search_btn.setVisible(False)
         self.clear_search_btn.clicked.connect(self._clear_search)
@@ -306,22 +308,22 @@ class ConversationSidebar(QWidget):
         # 日付フィルター
         self.date_filter = QComboBox()
         self.date_filter.setToolTip("期間で会話をフィルタ")
-        self.date_filter.addItems(["All Time", "Today", "Yesterday", "This Week", "This Month"])
-        self.date_filter.setStyleSheet("""
-            QComboBox {
-                background-color: #12121f;
-                color: #94a3b8;
-                border: 1px solid #252540;
+        self.date_filter.addItems(["すべて", "今日", "昨日", "今週", "今月"])
+        self.date_filter.setStyleSheet(f"""
+            QComboBox {{
+                background-color: {Colors.BG_INPUT};
+                color: {Colors.TEXT_DIM};
+                border: 1px solid {Colors.BORDER};
                 border-radius: 6px;
                 padding: 4px 8px;
                 font-size: 11px;
-            }
-            QComboBox::drop-down { border: none; width: 20px; }
-            QComboBox QAbstractItemView {
-                background-color: #161625;
-                color: #eef2ff;
-                border: 1px solid #252540;
-            }
+            }}
+            QComboBox::drop-down {{ border: none; width: 20px; }}
+            QComboBox QAbstractItemView {{
+                background-color: {Colors.SURFACE_2};
+                color: {Colors.TEXT};
+                border: 1px solid {Colors.BORDER};
+            }}
         """)
         self.date_filter.currentIndexChanged.connect(self._apply_filters)
         filter_row.addWidget(self.date_filter)
@@ -329,7 +331,7 @@ class ConversationSidebar(QWidget):
         # モデルフィルター
         self.model_filter = QComboBox()
         self.model_filter.setToolTip("使用モデルで会話をフィルタ")
-        self.model_filter.addItems(["All Models", "Claude", "Local", "Auto"])
+        self.model_filter.addItems(["すべてのモデル", "Claude", "ローカル", "Auto"])
         self.model_filter.setStyleSheet(self.date_filter.styleSheet())
         self.model_filter.currentIndexChanged.connect(self._apply_filters)
         filter_row.addWidget(self.model_filter)
@@ -338,8 +340,8 @@ class ConversationSidebar(QWidget):
         header_layout.addLayout(filter_row)
         
         # 会話カウント
-        self.count_label = QLabel("0 conversations")
-        self.count_label.setStyleSheet("color: #64748b; font-size: 11px;")
+        self.count_label = QLabel("0 件の会話")
+        self.count_label.setStyleSheet(f"color: {Colors.TEXT_MUTED}; font-size: 11px;")
         header_layout.addWidget(self.count_label)
         
         layout.addWidget(header)
@@ -348,24 +350,24 @@ class ConversationSidebar(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        scroll.setStyleSheet("""
-            QScrollArea {
-                background-color: #10101a;
+        scroll.setStyleSheet(f"""
+            QScrollArea {{
+                background-color: {Colors.SURFACE_1};
                 border: none;
-            }
-            QScrollBar:vertical {
+            }}
+            QScrollBar:vertical {{
                 background: transparent;
                 width: 6px;
                 margin: 0;
-            }
-            QScrollBar::handle:vertical {
-                background: #252540;
+            }}
+            QScrollBar::handle:vertical {{
+                background: {Colors.BORDER};
                 border-radius: 3px;
                 min-height: 30px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #6366f1;
-            }
+            }}
+            QScrollBar::handle:vertical:hover {{
+                background: {Colors.PRIMARY};
+            }}
         """)
         
         self.list_container = QWidget()
@@ -404,17 +406,17 @@ class ConversationSidebar(QWidget):
         
         # 日付フィルター
         today = datetime.now().date()
-        if date_filter == "Today":
+        if date_filter == "今日":
             filtered = [c for c in filtered if c.date.date() == today]
-        elif date_filter == "Yesterday":
+        elif date_filter == "昨日":
             filtered = [c for c in filtered if c.date.date() == today - timedelta(days=1)]
-        elif date_filter == "This Week":
+        elif date_filter == "今週":
             filtered = [c for c in filtered if c.date.date() >= today - timedelta(days=7)]
-        elif date_filter == "This Month":
+        elif date_filter == "今月":
             filtered = [c for c in filtered if c.date.date().month == today.month]
-        
+
         # モデルフィルター
-        if model_filter != "All Models":
+        if model_filter != "すべてのモデル":
             filtered = [c for c in filtered if model_filter.lower() in c.model.lower()]
         
         # ピン留めを先頭に
@@ -449,7 +451,7 @@ class ConversationSidebar(QWidget):
             self.list_layout.insertWidget(self.list_layout.count() - 1, item_widget)
         
         # カウント更新
-        self.count_label.setText(f"{len(self.filtered_conversations)} conversations")
+        self.count_label.setText(f"{len(self.filtered_conversations)} 件の会話")
     
     def _on_item_clicked(self, conversation_id: str):
         """アイテムクリック時"""
@@ -463,21 +465,21 @@ class ConversationSidebar(QWidget):
     def _show_context_menu(self, conversation_id: str, position):
         """コンテキストメニュー表示"""
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #161625;
-                color: #eef2ff;
-                border: 1px solid #252540;
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {Colors.SURFACE_2};
+                color: {Colors.TEXT};
+                border: 1px solid {Colors.BORDER};
                 border-radius: 8px;
                 padding: 6px;
-            }
-            QMenu::item {
+            }}
+            QMenu::item {{
                 padding: 8px 20px;
                 border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #6366f1;
-            }
+            }}
+            QMenu::item:selected {{
+                background-color: {Colors.PRIMARY};
+            }}
         """)
         
         # 会話を探す
@@ -486,23 +488,23 @@ class ConversationSidebar(QWidget):
             return
         
         # アクション追加
-        open_action = QAction("📂 Open", self)
+        open_action = QAction("📂 開く", self)
         open_action.triggered.connect(lambda: self.conversation_selected.emit(conversation_id))
         menu.addAction(open_action)
-        
+
         menu.addSeparator()
-        
-        pin_action = QAction("📌 Unpin" if conv.is_pinned else "📌 Pin", self)
+
+        pin_action = QAction("📌 ピン解除" if conv.is_pinned else "📌 ピン留め", self)
         pin_action.triggered.connect(lambda: self.conversation_pin_requested.emit(conversation_id, not conv.is_pinned))
         menu.addAction(pin_action)
-        
-        rename_action = QAction("✏️ Rename", self)
+
+        rename_action = QAction("✏️ 名前を変更", self)
         rename_action.triggered.connect(lambda: self._rename_conversation(conversation_id))
         menu.addAction(rename_action)
-        
+
         menu.addSeparator()
-        
-        delete_action = QAction("🗑️ Delete", self)
+
+        delete_action = QAction("🗑️ 削除", self)
         delete_action.triggered.connect(lambda: self._confirm_delete(conversation_id))
         menu.addAction(delete_action)
         

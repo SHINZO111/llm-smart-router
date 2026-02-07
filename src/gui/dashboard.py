@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, QSettings
 from PySide6.QtGui import QPainter, QColor, QFont, QPen
 
+from gui.design_tokens import Colors, Spacing, Radius, Typography, L10n
+
 
 class CircularProgress(QWidget):
     """円形プログレスバー"""
@@ -28,7 +30,7 @@ class CircularProgress(QWidget):
         self.title = title
         self.value = 0
         self.max_value = 100
-        self.color = QColor("#6366f1")
+        self.color = QColor(Colors.PRIMARY)
         self.setMinimumSize(120, 150)
     
     def set_value(self, value, max_value=100):
@@ -48,33 +50,33 @@ class CircularProgress(QWidget):
         height = self.height()
         
         # 外円
-        pen = QPen(QColor("#404040"))
+        pen = QPen(QColor(Colors.BORDER))
         pen.setWidth(8)
         painter.setPen(pen)
         painter.drawArc(20, 20, 80, 80, 0, 360 * 16)
-        
+
         # プログレス円
         pen = QPen(self.color)
         pen.setWidth(8)
         pen.setCapStyle(Qt.RoundCap)
         painter.setPen(pen)
-        
+
         angle = int((self.value / self.max_value) * 360 * 16) if self.max_value > 0 else 0
         painter.drawArc(20, 20, 80, 80, 90 * 16, -angle)
-        
+
         # テキスト
-        painter.setPen(QColor("#f9fafb"))
-        font = QFont("Segoe UI", 14, QFont.Bold)
+        painter.setPen(QColor(Colors.TEXT))
+        font = QFont(Typography.FAMILY.split(',')[0].strip('"'), Typography.SIZE_LG, QFont.Bold)
         painter.setFont(font)
-        
+
         text = f"{int((self.value / self.max_value) * 100)}%" if self.max_value > 0 else "0%"
         text_rect = painter.boundingRect(0, 0, 0, 0, Qt.AlignCenter, text)
         text_x = (width - text_rect.width()) // 2
         text_y = 70
         painter.drawText(text_x, text_y, text)
-        
+
         # タイトル
-        font.setPointSize(10)
+        font.setPointSize(Typography.SIZE_XS)
         font.setBold(False)
         painter.setFont(font)
         title_rect = painter.boundingRect(0, 0, 0, 0, Qt.AlignCenter, self.title)
@@ -89,7 +91,7 @@ class BarChart(QWidget):
         super().__init__(parent)
         self.title = title
         self.data = []
-        self.colors = ["#6366f1", "#10b981", "#f59e0b", "#ef4444"]
+        self.colors = [Colors.PRIMARY, Colors.SECONDARY, Colors.ACCENT, Colors.DANGER]
         self.setMinimumSize(200, 150)
     
     def set_data(self, data):
@@ -107,36 +109,37 @@ class BarChart(QWidget):
         height = self.height()
         
         # タイトル
-        painter.setPen(QColor("#f9fafb"))
-        font = QFont("Segoe UI", 10, QFont.Bold)
+        _font_family = Typography.FAMILY.split(',')[0].strip('"')
+        painter.setPen(QColor(Colors.TEXT))
+        font = QFont(_font_family, Typography.SIZE_XS, QFont.Bold)
         painter.setFont(font)
         painter.drawText(10, 20, self.title)
-        
+
         if not self.data:
             return
-        
+
         # バー描画
         max_val = max(d[1] for d in self.data) if self.data else 1
         bar_width = (width - 40) // len(self.data)
-        
+
         for i, (label, value, color) in enumerate(self.data):
             x = 20 + i * bar_width
             bar_height = (value / max_val) * (height - 80)
             y = height - 40 - bar_height
-            
+
             # バー
             painter.fillRect(x, y, bar_width - 10, bar_height, QColor(color))
-            
+
             # 値
-            painter.setPen(QColor("#f9fafb"))
-            painter.setFont(QFont("Segoe UI", 9))
+            painter.setPen(QColor(Colors.TEXT))
+            painter.setFont(QFont(_font_family, Typography.SIZE_XS - 1))
             value_text = str(int(value))
             text_rect = painter.boundingRect(0, 0, 0, 0, Qt.AlignCenter, value_text)
             painter.drawText(x + (bar_width - 10 - text_rect.width()) // 2, y - 5, value_text)
-            
+
             # ラベル
-            painter.setPen(QColor("#9ca3af"))
-            painter.setFont(QFont("Segoe UI", 8))
+            painter.setPen(QColor(Colors.TEXT_DIM))
+            painter.setFont(QFont(_font_family, Typography.SIZE_XS - 2))
             label_rect = painter.boundingRect(0, 0, 0, 0, Qt.AlignCenter, label)
             painter.drawText(x + (bar_width - 10 - label_rect.width()) // 2, height - 20, label)
 
@@ -155,41 +158,43 @@ class StatisticsDashboard(QWidget):
     def init_ui(self):
         """UI初期化"""
         layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-        
+        layout.setSpacing(Spacing.MD)
+
         # タイトル
-        title = QLabel("📊 ダッシュボード")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #818cf8;")
+        title = QLabel(f"📊 {L10n.DASHBOARD_TITLE}")
+        title.setStyleSheet(
+            f"font-size: {Typography.SIZE_XL}px; font-weight: bold; color: {Colors.PRIMARY_LIGHT};"
+        )
         layout.addWidget(title)
-        
+
         # === 概要カード ===
         cards_layout = QHBoxLayout()
-        
+
         # 総リクエスト
-        self.total_card = self.create_stat_card("📈 総リクエスト", "0", "#6366f1")
+        self.total_card = self.create_stat_card("📈 総リクエスト", "0", Colors.PRIMARY)
         cards_layout.addWidget(self.total_card)
-        
+
         # 節約額
-        self.saved_card = self.create_stat_card("💰 節約額", "¥0", "#10b981")
+        self.saved_card = self.create_stat_card("💰 節約額", "¥0", Colors.SECONDARY)
         cards_layout.addWidget(self.saved_card)
-        
+
         # 総コスト
-        self.cost_card = self.create_stat_card("☁️ クラウドコスト", "¥0", "#f59e0b")
+        self.cost_card = self.create_stat_card("☁️ クラウドコスト", "¥0", Colors.ACCENT)
         cards_layout.addWidget(self.cost_card)
-        
+
         layout.addLayout(cards_layout)
-        
+
         # === モデル使用状況 ===
         usage_group = QGroupBox("🔄 モデル使用状況")
         usage_layout = QHBoxLayout(usage_group)
-        
+
         # 円形プログレス
         self.local_progress = CircularProgress("ローカル")
-        self.local_progress.set_color("#10b981")
+        self.local_progress.set_color(Colors.SECONDARY)
         usage_layout.addWidget(self.local_progress)
-        
+
         self.cloud_progress = CircularProgress("クラウド")
-        self.cloud_progress.set_color("#6366f1")
+        self.cloud_progress.set_color(Colors.PRIMARY)
         usage_layout.addWidget(self.cloud_progress)
         
         # バーチャート
@@ -221,22 +226,26 @@ class StatisticsDashboard(QWidget):
         card = QFrame()
         card.setStyleSheet(f'''
             QFrame {{
-                background-color: #2d2d2d;
-                border-radius: 8px;
-                padding: 12px;
+                background-color: {Colors.SURFACE_2};
+                border-radius: {Radius.MD}px;
+                padding: {Spacing.MD}px;
                 border-left: 4px solid {color};
             }}
         ''')
-        
+
         layout = QVBoxLayout(card)
-        layout.setSpacing(4)
-        
+        layout.setSpacing(Spacing.XS)
+
         title_label = QLabel(title)
-        title_label.setStyleSheet("color: #9ca3af; font-size: 11px;")
+        title_label.setStyleSheet(
+            f"color: {Colors.TEXT_DIM}; font-size: {Typography.SIZE_SM}px;"
+        )
         layout.addWidget(title_label)
-        
+
         value_label = QLabel(value)
-        value_label.setStyleSheet(f"color: {color}; font-size: 24px; font-weight: bold;")
+        value_label.setStyleSheet(
+            f"color: {color}; font-size: {Typography.SIZE_XXL}px; font-weight: bold;"
+        )
         value_label.setObjectName(f"value_{title}")
         layout.addWidget(value_label)
         
@@ -271,8 +280,8 @@ class StatisticsDashboard(QWidget):
             
             # チャート更新
             self.usage_chart.set_data([
-                ("ローカル", local, "#10b981"),
-                ("クラウド", cloud, "#6366f1")
+                ("ローカル", local, Colors.SECONDARY),
+                ("クラウド", cloud, Colors.PRIMARY)
             ])
         
         # 履歴に追加
@@ -357,13 +366,13 @@ class StatisticsDialog(QDialog):
         for i, (name, default) in enumerate(metrics):
             row = i // 3
             col = (i % 3) * 2
-            
+
             label = QLabel(f"{name}:")
-            label.setStyleSheet("color: #9ca3af;")
+            label.setStyleSheet(f"color: {Colors.TEXT_DIM};")
             summary_layout.addWidget(label, row, col)
-            
+
             value = QLabel(default)
-            value.setStyleSheet("color: #6366f1; font-weight: bold;")
+            value.setStyleSheet(f"color: {Colors.PRIMARY}; font-weight: bold;")
             self.summary_labels[name] = value
             summary_layout.addWidget(value, row, col + 1)
         

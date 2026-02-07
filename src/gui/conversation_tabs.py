@@ -15,6 +15,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QAction, QIcon, QFont, QCursor
 
+from gui.design_tokens import Colors
+
 
 # ============================================================
 # タブデータモデル
@@ -32,7 +34,7 @@ class TabInfo:
     @property
     def display_title(self) -> str:
         """表示用タイトル"""
-        title = self.title if self.title.strip() else "Untitled"
+        title = self.title if self.title.strip() else "無題"
         if self.is_modified:
             title = f"● {title}"
         return title
@@ -66,11 +68,11 @@ class ConversationTabBar(QTabBar):
         self.setElideMode(Qt.ElideRight)
         
         # スタイル設定
-        self.setStyleSheet("""
-            QTabBar::tab {
-                background-color: #161625;
-                color: #94a3b8;
-                border: 1px solid #252540;
+        self.setStyleSheet(f"""
+            QTabBar::tab {{
+                background-color: {Colors.SURFACE_2};
+                color: {Colors.TEXT_DIM};
+                border: 1px solid {Colors.BORDER};
                 border-bottom: none;
                 border-top-left-radius: 8px;
                 border-top-right-radius: 8px;
@@ -78,26 +80,26 @@ class ConversationTabBar(QTabBar):
                 min-width: 120px;
                 max-width: 200px;
                 font-size: 12px;
-            }
-            QTabBar::tab:selected {
+            }}
+            QTabBar::tab:selected {{
                 background-color: #1e1e2e;
-                color: #eef2ff;
-                border-color: #6366f1;
-            }
-            QTabBar::tab:hover:!selected {
-                background-color: #1c1c30;
-                color: #eef2ff;
-            }
-            QTabBar::close-button {
+                color: {Colors.TEXT};
+                border-color: {Colors.PRIMARY};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {Colors.SURFACE_3};
+                color: {Colors.TEXT};
+            }}
+            QTabBar::close-button {{
                 image: none;
                 subcontrol-position: right;
                 subcontrol-origin: padding;
                 margin-left: 4px;
-            }
-            QTabBar::close-button:hover {
-                background-color: #ef4444;
+            }}
+            QTabBar::close-button:hover {{
+                background-color: {Colors.DANGER};
                 border-radius: 4px;
-            }
+            }}
         """)
     
     def mousePressEvent(self, event):
@@ -139,16 +141,16 @@ class ConversationTabContent(QWidget):
         # メッセージ表示用テキストエリア（読み取り専用）
         self._text_display = QTextEdit()
         self._text_display.setReadOnly(True)
-        self._text_display.setStyleSheet("""
-            QTextEdit {
-                background-color: #0a0a0f;
-                color: #eef2ff;
+        self._text_display.setStyleSheet(f"""
+            QTextEdit {{
+                background-color: {Colors.SURFACE_0};
+                color: {Colors.TEXT};
                 border: none;
                 font-family: "Segoe UI", "Yu Gothic UI", "Meiryo", sans-serif;
                 font-size: 13px;
                 padding: 16px;
-                selection-background-color: #6366f1;
-            }
+                selection-background-color: {Colors.PRIMARY};
+            }}
         """)
         self._text_display.setPlaceholderText("Conversation content will appear here...")
         layout.addWidget(self._text_display, 1)
@@ -163,12 +165,12 @@ class ConversationTabContent(QWidget):
         html_parts = []
         for role, content, model, ts in self._messages:
             if role == "user":
-                label = '<span style="color: #6366f1; font-weight: bold;">You</span>'
+                label = f'<span style="color: {Colors.PRIMARY}; font-weight: bold;">You</span>'
             elif role == "assistant":
-                model_tag = f' <span style="color: #64748b; font-size: 11px;">({model})</span>' if model else ""
-                label = f'<span style="color: #10b981; font-weight: bold;">Assistant</span>{model_tag}'
+                model_tag = f' <span style="color: {Colors.TEXT_MUTED}; font-size: 11px;">({model})</span>' if model else ""
+                label = f'<span style="color: {Colors.SECONDARY}; font-weight: bold;">Assistant</span>{model_tag}'
             else:
-                label = f'<span style="color: #f59e0b; font-weight: bold;">{role}</span>'
+                label = f'<span style="color: {Colors.ACCENT}; font-weight: bold;">{role}</span>'
 
             # コンテンツのHTMLエスケープ
             escaped = (content
@@ -240,37 +242,37 @@ class ConversationTabWidget(QTabWidget):
         self.setElideMode(Qt.ElideRight)
         
         # スタイル
-        self.setStyleSheet("""
-            QTabWidget::pane {
-                background-color: #0a0a0f;
-                border: 1px solid #252540;
+        self.setStyleSheet(f"""
+            QTabWidget::pane {{
+                background-color: {Colors.SURFACE_0};
+                border: 1px solid {Colors.BORDER};
                 border-radius: 0 10px 10px 10px;
                 top: -1px;
-            }
-            QTabWidget::tab-bar {
+            }}
+            QTabWidget::tab-bar {{
                 left: 8px;
-            }
+            }}
         """)
         
         # 新規タブボタン
         self._new_tab_btn = QToolButton()
         self._new_tab_btn.setText("+")
-        self._new_tab_btn.setToolTip("New Conversation")
-        self._new_tab_btn.setStyleSheet("""
-            QToolButton {
+        self._new_tab_btn.setToolTip("新規会話")
+        self._new_tab_btn.setStyleSheet(f"""
+            QToolButton {{
                 background-color: transparent;
-                color: #94a3b8;
-                border: 1px solid #252540;
+                color: {Colors.TEXT_DIM};
+                border: 1px solid {Colors.BORDER};
                 border-radius: 6px;
                 padding: 4px 12px;
                 font-size: 16px;
                 font-weight: bold;
-            }
-            QToolButton:hover {
-                background-color: #6366f1;
+            }}
+            QToolButton:hover {{
+                background-color: {Colors.PRIMARY};
                 color: white;
-                border-color: #6366f1;
-            }
+                border-color: {Colors.PRIMARY};
+            }}
         """)
         self._new_tab_btn.setCursor(Qt.PointingHandCursor)
         self._new_tab_btn.clicked.connect(self.tab_conversation_new_requested.emit)
@@ -314,21 +316,21 @@ class ConversationTabWidget(QTabWidget):
     def _show_context_menu_at(self, index: int, global_pos):
         """指定位置にコンテキストメニューを表示"""
         menu = QMenu(self)
-        menu.setStyleSheet("""
-            QMenu {
-                background-color: #161625;
-                color: #eef2ff;
-                border: 1px solid #252540;
+        menu.setStyleSheet(f"""
+            QMenu {{
+                background-color: {Colors.SURFACE_2};
+                color: {Colors.TEXT};
+                border: 1px solid {Colors.BORDER};
                 border-radius: 8px;
                 padding: 6px;
-            }
-            QMenu::item {
+            }}
+            QMenu::item {{
                 padding: 8px 20px;
                 border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #6366f1;
-            }
+            }}
+            QMenu::item:selected {{
+                background-color: {Colors.PRIMARY};
+            }}
         """)
         
         tab_info = self._tab_infos.get(index)
@@ -336,21 +338,21 @@ class ConversationTabWidget(QTabWidget):
             return
         
         # 閉じるアクション
-        close_action = QAction("✕ Close", self)
+        close_action = QAction("✕ 閉じる", self)
         close_action.triggered.connect(lambda: self.close_tab_at(index))
         menu.addAction(close_action)
-        
-        close_others_action = QAction("Close Others", self)
+
+        close_others_action = QAction("他のタブを閉じる", self)
         close_others_action.triggered.connect(lambda: self.tab_conversation_close_others_requested.emit(tab_info.id))
         menu.addAction(close_others_action)
-        
-        close_right_action = QAction("Close to the Right", self)
+
+        close_right_action = QAction("右のタブを閉じる", self)
         close_right_action.triggered.connect(lambda: self.tab_conversation_close_right_requested.emit(tab_info.id))
         menu.addAction(close_right_action)
-        
+
         menu.addSeparator()
-        
-        close_all_action = QAction("Close All", self)
+
+        close_all_action = QAction("すべて閉じる", self)
         close_all_action.triggered.connect(self.tab_conversation_close_all_requested.emit)
         menu.addAction(close_all_action)
         
@@ -358,7 +360,7 @@ class ConversationTabWidget(QTabWidget):
     
     # ── パブリックメソッド ──
     
-    def add_conversation_tab(self, conversation_id: str, title: str = "Untitled", 
+    def add_conversation_tab(self, conversation_id: str, title: str = "無題", 
                             model: str = "auto") -> int:
         """会話タブを追加"""
         # 既存のタブがあればそれを返す
@@ -551,12 +553,12 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     
     # スタイル設定
-    app.setStyleSheet("""
-        QWidget {
+    app.setStyleSheet(f"""
+        QWidget {{
             font-family: "Segoe UI", "Yu Gothic UI", sans-serif;
-            background-color: #0a0a0f;
-            color: #eef2ff;
-        }
+            background-color: {Colors.SURFACE_0};
+            color: {Colors.TEXT};
+        }}
     """)
     
     tabs = ConversationTabWidget()
@@ -565,7 +567,7 @@ if __name__ == '__main__':
     # テストタブ追加
     tabs.add_conversation_tab("conv1", "Python Discussion", "claude")
     tabs.add_conversation_tab("conv2", "Cost Analysis", "local")
-    tabs.add_conversation_tab("conv3", "Untitled", "auto")
+    tabs.add_conversation_tab("conv3", "無題", "auto")
     
     # シグナル接続
     tabs.tab_conversation_switched.connect(lambda cid: print(f"Switched to: {cid}"))
