@@ -45,6 +45,8 @@ backups/
 
 # External projects
 webclaw/
+agent-lightning/
+everything-claude-code/
 
 # Nested repo artifact
 llm-smart-router/

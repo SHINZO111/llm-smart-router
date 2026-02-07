@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Node.js dependencies
+        run: npm install
+
+      - name: Create required directories
+        run: |
+          mkdir -p data logs cache queue
+        shell: bash
+
+      - name: Syntax check (Python)
+        run: python -m py_compile src/api/main.py
+
+      - name: Run Python tests
+        run: |
+          python -m pytest tests/test_conversation.py tests/test_error_handling.py tests/test_openai_compat.py tests/test_adapters.py tests/test_runtime_launchers.py -v -m "not integration and not slow" --timeout=60
+        env:
+          PYTHONDONTWRITEBYTECODE: 1
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Syntax check all Python files
+        run: |
+          find src -name "*.py" -exec python -m py_compile {} \;
+        shell: bash

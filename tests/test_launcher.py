@@ -411,7 +411,7 @@ class TestLaunchOrchestrator:
 
         result = orch._run_stage("test_stage", error_handler)
         assert result.status == StageStatus.FAILED
-        assert "テストエラー" in result.error
+        assert "例外: RuntimeError" in result.error
 
     def test_all_stages_disabled(self):
         """全ステージ無効時"""

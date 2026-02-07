@@ -11,6 +11,7 @@ import signal
 import shutil
 import subprocess
 import logging
+import threading
 from pathlib import Path
 from typing import Optional, Callable, Dict, Any, List
 from dataclasses import dataclass, field
@@ -108,7 +109,7 @@ class LaunchConfig:
             with open(path, "r", encoding="utf-8") as f:
                 full_config = yaml.safe_load(f) or {}
         except Exception as e:
-            logger.warning(f"config.yaml 読み込みエラー: {e}")
+            logger.warning("config.yaml 読み込みエラー: %s", type(e).__name__)
             return cls()
 
         launcher = full_config.get("launcher", {})
@@ -121,33 +122,45 @@ class LaunchConfig:
         oc = launcher.get("openclaw", {})
         dc = launcher.get("discord", {})
 
+        def _float(val, default: float) -> float:
+            try:
+                return float(val)
+            except (TypeError, ValueError):
+                return default
+
+        def _int(val, default: int) -> int:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return default
+
         return cls(
             lmstudio_enabled=bool(lm.get("enabled", True)),
-            lmstudio_timeout=float(lm.get("timeout", 60.0)),
-            lmstudio_retry=int(lm.get("retry", 2)),
+            lmstudio_timeout=_float(lm.get("timeout"), 60.0),
+            lmstudio_retry=_int(lm.get("retry"), 2),
             lmstudio_endpoint=str(lm.get("endpoint",
                                           os.environ.get("LM_STUDIO_ENDPOINT",
                                                           "http://localhost:1234/v1"))),
             lmstudio_path=lm.get("path") or os.environ.get("LM_STUDIO_PATH"),
             model_detect_enabled=bool(lm.get("model_detect", True)),
-            model_detect_timeout=float(lm.get("model_detect_timeout", 30.0)),
+            model_detect_timeout=_float(lm.get("model_detect_timeout"), 30.0),
             ollama_enabled=bool(ol.get("enabled", False)),
-            ollama_timeout=float(ol.get("timeout", 30.0)),
+            ollama_timeout=_float(ol.get("timeout"), 30.0),
             ollama_endpoint=str(ol.get("endpoint",
                                        os.environ.get("OLLAMA_ENDPOINT",
                                                        "http://localhost:11434"))),
             ollama_path=ol.get("path") or os.environ.get("OLLAMA_PATH"),
             llamacpp_enabled=bool(lc.get("enabled", False)),
-            llamacpp_timeout=float(lc.get("timeout", 30.0)),
+            llamacpp_timeout=_float(lc.get("timeout"), 30.0),
             llamacpp_endpoint=str(lc.get("endpoint",
                                           os.environ.get("LLAMACPP_ENDPOINT",
                                                           "http://localhost:8080"))),
             llamacpp_path=lc.get("path") or os.environ.get("LLAMACPP_PATH"),
             llamacpp_model=lc.get("model") or os.environ.get("LLAMACPP_MODEL"),
             openclaw_enabled=bool(oc.get("enabled", True)),
-            openclaw_timeout=float(oc.get("timeout", 15.0)),
+            openclaw_timeout=_float(oc.get("timeout"), 15.0),
             discord_enabled=bool(dc.get("enabled", True)),
-            discord_timeout=float(dc.get("timeout", 15.0)),
+            discord_timeout=_float(dc.get("timeout"), 15.0),
             discord_bot_path=dc.get("bot_path"),
         )
 
@@ -327,7 +340,8 @@ class LaunchOrchestrator:
 
         except Exception as e:
             elapsed = time.time() - start
-            error_msg = f"例外: {e}"
+            error_msg = f"例外: {type(e).__name__}"
+            logger.error("ステージ %s で例外発生", name, exc_info=True)
             self._safe_progress(name, StageStatus.FAILED, error_msg)
             return StageResult(name=name, status=StageStatus.FAILED, elapsed=elapsed, error=error_msg)
 
@@ -393,18 +407,22 @@ class LaunchOrchestrator:
         import asyncio
 
         src_path = str(PROJECT_ROOT / "src")
+        _path_lock = threading.Lock()
         path_added = False
-        if src_path not in sys.path:
-            sys.path.insert(0, src_path)
-            path_added = True
+        with _path_lock:
+            if src_path not in sys.path:
+                sys.path.insert(0, src_path)
+                path_added = True
         try:
             from scanner.scanner import MultiRuntimeScanner
             from scanner.registry import ModelRegistry
         except ImportError:
             return False, "scanner モジュールのインポートに失敗"
         finally:
-            if path_added and src_path in sys.path:
-                sys.path.remove(src_path)
+            if path_added:
+                with _path_lock:
+                    if src_path in sys.path:
+                        sys.path.remove(src_path)
 
         timeout = self.config.model_detect_timeout
         scanner = MultiRuntimeScanner(timeout=timeout)
@@ -461,11 +479,13 @@ class LaunchOrchestrator:
             if result.returncode == 0:
                 return True, "OpenClaw統合モジュール検証OK"
             else:
-                return False, f"構文エラー: {result.stderr.strip()}"
+                logger.error("OpenClaw構文チェック失敗: %s", result.stderr.strip())
+                return False, "OpenClaw統合モジュールに構文エラーがあります"
         except subprocess.TimeoutExpired:
             return False, "OpenClaw検証タイムアウト"
         except Exception as e:
-            return False, f"OpenClaw検証エラー: {e}"
+            logger.error("OpenClaw検証エラー", exc_info=True)
+            return False, f"OpenClaw検証エラー: {type(e).__name__}"
 
     def _stage_discord(self) -> tuple:
         """Discord Bot起動ステージ"""
@@ -475,7 +495,7 @@ class LaunchOrchestrator:
 
         bot_path = self.config.discord_bot_path or str(PROJECT_ROOT / "discord-bot.js")
         if not Path(bot_path).exists():
-            return False, f"discord-bot.js が見つかりません: {bot_path}"
+            return False, "discord-bot.js が見つかりません"
 
         node_path = shutil.which("node")
         if not node_path:
@@ -513,7 +533,7 @@ class LaunchOrchestrator:
         def signal_handler(signum, frame):
             logger.info(f"シグナル {signum} 受信")
             self.shutdown()
-            sys.exit(128 + signum)
+            sys.exit(min(128 + signum, 255))
 
         try:
             signal.signal(signal.SIGINT, signal_handler)

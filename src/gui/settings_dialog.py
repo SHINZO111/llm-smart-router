@@ -164,7 +164,8 @@ class SettingsDialog(QDialog):
         
         self.router_path = QLineEdit()
         self.router_path.setToolTip("router.jsがあるプロジェクトルートディレクトリのパス")
-        self.router_path.setText(self.settings.value('router_path', 'F:\\llm-smart-router'))
+        _default_router_path = str(Path(__file__).resolve().parent.parent.parent)
+        self.router_path.setText(self.settings.value('router_path', _default_router_path))
         
         path_buttons = QHBoxLayout()
         path_buttons.addWidget(self.router_path)
@@ -939,8 +940,11 @@ class SettingsDialog(QDialog):
     def _ollama_refresh_models(self):
         """Ollamaモデル一覧を更新"""
         self.ollama_model_list.clear()
-        client = self._get_ollama_client()
-        models = client.list_models()
+        try:
+            client = self._get_ollama_client()
+            models = client.list_models(timeout=5.0)
+        except Exception:
+            models = []
         for m in models:
             name = m.get("name", "unknown")
             size_bytes = m.get("size", 0)

@@ -362,12 +362,13 @@ class LLMWorker(QThread):
     error = Signal(str)
     progress = Signal(str)
 
-    def __init__(self, router_path, input_text, model_type=None, config=None):
+    def __init__(self, router_path, input_text, model_type=None, config=None, api_key=None):
         super().__init__()
         self.router_path = router_path
         self.input_text = input_text
         self.model_type = model_type
         self.config = config or {}
+        self._api_key = api_key
         self._cancelled = False
         self._process = None
 
@@ -380,41 +381,36 @@ class LLMWorker(QThread):
                 pass
 
     def run(self):
+        image_path = None
         try:
             self.progress.emit("Preparing request...")
-            
+
             # 画像データがある場合は一時ファイルに保存
-            image_path = None
             if self.config.get('image_base64'):
                 import tempfile
                 image_data = base64.b64decode(self.config['image_base64'])
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as f:
                     f.write(image_data)
                     image_path = f.name
-            
+
             cmd = ['node', os.path.join(self.router_path, 'router.js')]
-            
+
             # モデル指定
             if self.model_type:
                 cmd.extend(['--model', self.model_type])
-            
+
             # 画像パスがあれば追加
             if image_path:
                 cmd.extend(['--image', image_path])
-            
+
             # 入力テキスト
             cmd.append(self.input_text)
 
             env = os.environ.copy()
-            km = SecureKeyManager()
-            api_key = km.get_api_key('anthropic')
-            if api_key:
-                env['ANTHROPIC_API_KEY'] = api_key
+            if self._api_key:
+                env['ANTHROPIC_API_KEY'] = self._api_key
 
             if self._cancelled:
-                # クリーンアップ
-                if image_path and os.path.exists(image_path):
-                    os.unlink(image_path)
                 return
 
             self.progress.emit("Querying LLM...")
@@ -431,14 +427,10 @@ class LLMWorker(QThread):
             while True:
                 if self._cancelled:
                     self._process.terminate()
-                    if image_path and os.path.exists(image_path):
-                        os.unlink(image_path)
                     return
                 elapsed = (datetime.now() - start).total_seconds()
                 if elapsed > timeout:
                     self._process.terminate()
-                    if image_path and os.path.exists(image_path):
-                        os.unlink(image_path)
                     self.error.emit(f"Timeout after {timeout}s")
                     return
                 line = self._process.stdout.readline()
@@ -450,10 +442,6 @@ class LLMWorker(QThread):
 
             rc = self._process.poll()
             stderr = self._process.stderr.read()
-
-            # 一時ファイル削除
-            if image_path and os.path.exists(image_path):
-                os.unlink(image_path)
 
             if rc == 0:
                 self.finished.emit({
@@ -467,6 +455,12 @@ class LLMWorker(QThread):
 
         except Exception as e:
             self.error.emit(str(e))
+        finally:
+            if image_path:
+                try:
+                    os.unlink(image_path)
+                except OSError:
+                    pass
 
 
 # ============================================================
@@ -1559,8 +1553,12 @@ class MainWindow(QMainWindow):
         if conv:
             self.conv_manager.set_current(conversation_id)
             self.conversation_sidebar.select_conversation(conversation_id)
-            # モデル表示を更新
-            self.model_combo.setCurrentText(f"  {conv.model.capitalize()}")
+            # モデル表示を更新（シグナルループ防止）
+            self.model_combo.blockSignals(True)
+            try:
+                self.model_combo.setCurrentText(f"  {conv.model.capitalize()}")
+            finally:
+                self.model_combo.blockSignals(False)
 
     def _on_tab_closed(self, conversation_id: str):
         """タブが閉じられた"""
@@ -1711,12 +1709,16 @@ class MainWindow(QMainWindow):
             self._refresh_btn.setEnabled(True)
             self._refresh_btn.setText("Scan")
             if count >= 0:
-                self._populate_model_combo()
-                # 選択復元
-                if self._prev_model_data:
-                    idx = self.model_combo.findData(self._prev_model_data)
-                    if idx >= 0:
-                        self.model_combo.setCurrentIndex(idx)
+                self.model_combo.blockSignals(True)
+                try:
+                    self._populate_model_combo()
+                    # 選択復元
+                    if self._prev_model_data:
+                        idx = self.model_combo.findData(self._prev_model_data)
+                        if idx >= 0:
+                            self.model_combo.setCurrentIndex(idx)
+                finally:
+                    self.model_combo.blockSignals(False)
                 self.model_status.setText(f"{count} models detected")
                 self._status_dot.set_color(Colors.SECONDARY)
             else:
@@ -1947,10 +1949,19 @@ class MainWindow(QMainWindow):
         if has_image:
             image_base64, mime_type = self.image_handler.to_base64()
 
+        # APIキーはメインスレッドで取得（QThread内でのSecureKeyManager呼び出し回避）
+        _api_key = None
+        try:
+            km = SecureKeyManager()
+            _api_key = km.get_api_key('anthropic')
+        except Exception:
+            pass
+
         self.worker = LLMWorker(
             self.router_path, text,
             None if model == "auto" else model,
-            config={'timeout': 120, 'image_base64': image_base64}
+            config={'timeout': 120, 'image_base64': image_base64},
+            api_key=_api_key,
         )
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)
@@ -2063,11 +2074,19 @@ class MainWindow(QMainWindow):
             )
             self.conversation_tabs.set_tab_loading(current_id, True)
 
+        _api_key = None
+        try:
+            km = SecureKeyManager()
+            _api_key = km.get_api_key('anthropic')
+        except Exception:
+            pass
+
         self.worker = LLMWorker(
             self.router_path,
             next_req['text'],
             None if next_req['model'] == "auto" else next_req['model'],
-            config={'timeout': 120, 'image_base64': next_req['image_base64']}
+            config={'timeout': 120, 'image_base64': next_req['image_base64']},
+            api_key=_api_key,
         )
         self.worker.finished.connect(self._on_finished)
         self.worker.error.connect(self._on_error)

@@ -4,6 +4,7 @@ FastAPI API Routes
 REST API endpoints for conversation history management
 """
 import json
+import re
 import sys
 from functools import wraps
 from pathlib import Path
@@ -35,6 +36,8 @@ conversation_manager = ConversationManager()
 # ==================== Constants ====================
 
 VALID_SORT_FIELDS = {"created_at", "updated_at", "title", "message_count"}
+_OLLAMA_MODEL_NAME_RE = re.compile(r'^[a-zA-Z0-9._:/-]+$')
+_FORCE_MODEL_RE = re.compile(r'^(auto|local|cloud|local:[a-zA-Z0-9._:/-]+)$')
 
 
 # ==================== Helpers ====================
@@ -637,7 +640,7 @@ async def get_detected_models():
     }
 
 
-_scan_lock = asyncio.Lock()
+_scan_in_progress = False
 
 
 @router.post("/models/scan")
@@ -646,22 +649,26 @@ async def trigger_model_scan(background_tasks: BackgroundTasks):
     """
     バックグラウンドでモデルスキャンを開始する
     """
-    if _scan_lock.locked():
+    global _scan_in_progress
+    if _scan_in_progress:
         return {"status": "already_running", "message": "スキャン実行中です"}
 
     from scanner.scanner import MultiRuntimeScanner
     from scanner.registry import ModelRegistry
 
     async def _run_scan():
-        async with _scan_lock:
-            try:
-                scanner = MultiRuntimeScanner()
-                results = await scanner.scan_all()
-                registry_path = str(project_root.parent / "data" / "model_registry.json")
-                registry = ModelRegistry(cache_path=registry_path)
-                registry.update(results)
-            except Exception:
-                logger.error("バックグラウンドモデルスキャン失敗", exc_info=True)
+        global _scan_in_progress
+        _scan_in_progress = True
+        try:
+            scanner = MultiRuntimeScanner()
+            results = await scanner.scan_all()
+            registry_path = str(project_root.parent / "data" / "model_registry.json")
+            registry = ModelRegistry(cache_path=registry_path)
+            registry.update(results)
+        except Exception:
+            logger.error("バックグラウンドモデルスキャン失敗", exc_info=True)
+        finally:
+            _scan_in_progress = False
 
     background_tasks.add_task(_run_scan)
 
@@ -677,8 +684,7 @@ class OllamaModelRequest(BaseModel):
     @field_validator("name")
     @classmethod
     def validate_name(cls, v: str) -> str:
-        import re
-        if not re.match(r'^[a-zA-Z0-9._:/-]+$', v):
+        if not _OLLAMA_MODEL_NAME_RE.match(v):
             raise ValueError("モデル名に無効な文字が含まれています")
         return v
 
@@ -708,8 +714,7 @@ async def list_ollama_models():
 @_handle_errors
 async def show_ollama_model(name: str):
     """Ollamaモデルの詳細情報を取得"""
-    import re
-    if not re.match(r'^[a-zA-Z0-9._:/-]+$', name):
+    if not _OLLAMA_MODEL_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="無効なモデル名")
     if len(name) > 200:
         raise HTTPException(status_code=400, detail="モデル名が長すぎます")
@@ -724,7 +729,7 @@ async def show_ollama_model(name: str):
     return info
 
 
-_ollama_pull_lock = asyncio.Lock()
+_pull_in_progress = False
 
 
 @router.post("/models/ollama/pull", tags=["Models"])
@@ -733,7 +738,8 @@ async def pull_ollama_model(request: OllamaModelRequest, background_tasks: Backg
     """
     Ollamaモデルをダウンロード（バックグラウンド実行）
     """
-    if _ollama_pull_lock.locked():
+    global _pull_in_progress
+    if _pull_in_progress:
         return {"status": "busy", "message": "別のモデルをダウンロード中です"}
 
     client = _get_ollama_client()
@@ -743,11 +749,14 @@ async def pull_ollama_model(request: OllamaModelRequest, background_tasks: Backg
     model_name = request.name
 
     async def _run_pull():
-        async with _ollama_pull_lock:
-            try:
-                client.pull_model(model_name)
-            except Exception:
-                logger.error(f"Ollamaモデルダウンロード失敗: {model_name}", exc_info=True)
+        global _pull_in_progress
+        _pull_in_progress = True
+        try:
+            client.pull_model(model_name)
+        except Exception:
+            logger.error("Ollamaモデルダウンロード失敗: %r", model_name, exc_info=True)
+        finally:
+            _pull_in_progress = False
 
     background_tasks.add_task(_run_pull)
 
@@ -758,8 +767,7 @@ async def pull_ollama_model(request: OllamaModelRequest, background_tasks: Backg
 @_handle_errors
 async def delete_ollama_model(name: str):
     """Ollamaモデルを削除"""
-    import re
-    if not re.match(r'^[a-zA-Z0-9._:/-]+$', name):
+    if not _OLLAMA_MODEL_NAME_RE.match(name):
         raise HTTPException(status_code=400, detail="無効なモデル名")
     if len(name) > 200:
         raise HTTPException(status_code=400, detail="モデル名が長すぎます")
@@ -781,7 +789,14 @@ class RouterQueryRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)  # Allow both snake_case and camelCase
 
     input: str = Field(..., min_length=1, max_length=10000, description="クエリテキスト")
-    force_model: Optional[str] = Field(None, max_length=100, description="強制モデル指定 (local/cloud/local:model-id)", alias="forceModel")
+    force_model: Optional[str] = Field(None, max_length=100, description="強制モデル指定 (auto/local/cloud/local:model-id)", alias="forceModel")
+
+    @field_validator('force_model')
+    @classmethod
+    def validate_force_model(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not _FORCE_MODEL_RE.match(v):
+            raise ValueError('force_model must be auto, local, cloud, or local:<model-id>')
+        return v
     context: Optional[Dict[str, Any]] = Field(default_factory=dict, description="追加コンテキスト")
 
     @field_validator('context')
@@ -821,7 +836,6 @@ async def execute_router_query(request: RouterQueryRequest):
     import subprocess
     import tempfile
     import os
-    import hashlib
 
     # router.jsのパスを取得
     router_js_path = project_root.parent / "router.js"

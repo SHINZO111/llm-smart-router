@@ -430,12 +430,11 @@ class ConversationSidebar(QWidget):
             widget.deleteLater()
         self.item_widgets.clear()
         
-        # アイテムを再作成
-        for i in range(self.list_layout.count() - 1):  # stretchを除く
-            item = self.list_layout.itemAt(0)
+        # アイテムを再作成（stretchを残して先頭から順に除去）
+        while self.list_layout.count() > 1:
+            item = self.list_layout.takeAt(0)
             if item and item.widget():
                 item.widget().deleteLater()
-            self.list_layout.removeItem(item)
         
         for conv in self.filtered_conversations:
             item_widget = ConversationListItem(conv)
