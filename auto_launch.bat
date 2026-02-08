@@ -1,5 +1,4 @@
 @echo off
-chcp 65001 > nul
 REM ============================================================
 REM LLM Smart Router - Auto-Launch Chain
 REM ============================================================
@@ -10,35 +9,30 @@ echo   LLM Smart Router - Auto-Launch Chain
 echo ==================================================
 echo.
 
-REM プロジェクトディレクトリに移動
 cd /d "%~dp0"
 
-REM Python仮想環境があれば有効化
 if exist venv\Scripts\activate.bat (
-    echo   仮想環境を有効化中...
+    echo   Activating virtual environment...
     call venv\Scripts\activate.bat
 )
 
-REM Pythonが利用可能か確認
 python --version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo   [X] Python が見つかりません。PATH を確認してください。
+    echo   [X] Python not found. Please check your PATH.
     pause
     exit /b 1
 )
 
-REM Node.jsが利用可能か確認（OpenClaw/Discord Botステージで必要）
 node --version >nul 2>&1
 if %ERRORLEVEL% neq 0 (
-    echo   [!] Node.js が見つかりません。OpenClaw/Discord Bot ステージはスキップされます。
+    echo   [!] Node.js not found. OpenClaw/Discord Bot stages will be skipped.
 )
 
-REM Python起動チェーン実行
 echo.
-echo   Auto-Launch Chain を開始します...
+echo   Starting Auto-Launch Chain...
 echo.
 python -m launcher %*
 
 echo.
-echo   終了するにはキーを押してください...
+echo   Press any key to exit...
 pause >nul

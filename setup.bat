@@ -1,18 +1,16 @@
 @echo off
-chcp 65001 > nul
 setlocal enabledelayedexpansion
 
 REM ============================================================
-REM LLM Smart Router - ワンクリック セットアップ
-REM ダブルクリックするだけで全自動セットアップ完了
+REM LLM Smart Router - One-Click Setup
 REM ============================================================
 
 cd /d "%~dp0"
 
 echo.
 echo   ======================================================
-echo     LLM Smart Router - セットアップ
-echo     初回セットアップを自動で行います
+echo     LLM Smart Router - Setup
+echo     Automated first-time setup
 echo   ======================================================
 echo.
 
@@ -20,18 +18,18 @@ set "ERRORS=0"
 set "WARNINGS=0"
 
 REM ============================================================
-REM ステップ 1: 前提チェック
+REM Step 1: Prerequisites
 REM ============================================================
-echo   [1/6] 前提条件を確認中...
+echo   [1/6] Checking prerequisites...
 echo   ----------------------------------------------
 echo.
 
 REM -- Python --
 python --version > nul 2>&1
 if errorlevel 1 (
-    echo   X  Python が見つかりません
-    echo      https://www.python.org/downloads/ からインストールしてください
-    echo      インストール時に「Add Python to PATH」にチェックを入れてください
+    echo   X  Python not found.
+    echo      Please install from https://www.python.org/downloads/
+    echo      Make sure to check "Add Python to PATH" during install.
     echo.
     set /a ERRORS+=1
     goto :setup_failed
@@ -42,18 +40,18 @@ if errorlevel 1 (
 REM -- pip --
 python -m pip --version > nul 2>&1
 if errorlevel 1 (
-    echo   X  pip が見つかりません
+    echo   X  pip not found.
     set /a ERRORS+=1
 ) else (
-    echo   OK pip 利用可能
+    echo   OK pip available
 )
 
 REM -- Node.js --
 node --version > nul 2>&1
 if errorlevel 1 (
-    echo   !  Node.js が見つかりません（オプション）
-    echo      https://nodejs.org/ からインストールすると全機能が使えます
-    echo      （Router / Discord Bot に必要。GUI のみなら不要）
+    echo   !  Node.js not found (optional)
+    echo      Install from https://nodejs.org/ for full functionality.
+    echo      (Required for Router / Discord Bot. Not needed for GUI only.)
     set /a WARNINGS+=1
     set "HAS_NODE=0"
 ) else (
@@ -63,91 +61,91 @@ if errorlevel 1 (
 echo.
 
 REM ============================================================
-REM ステップ 2: 仮想環境 + 依存関係インストール
+REM Step 2: Virtual environment + dependencies
 REM ============================================================
-echo   [2/6] 依存関係をインストール中...
+echo   [2/6] Installing dependencies...
 echo   ----------------------------------------------
 echo.
 
-REM -- 仮想環境 --
+REM -- Virtual environment --
 if not exist "venv" (
-    echo   仮想環境を作成中...
+    echo   Creating virtual environment...
     python -m venv venv
     if errorlevel 1 (
-        echo   X  仮想環境の作成に失敗しました
+        echo   X  Failed to create virtual environment.
         set /a ERRORS+=1
         goto :setup_failed
     )
-    echo   OK 仮想環境を作成しました
+    echo   OK Virtual environment created.
 ) else (
-    echo   OK 仮想環境は既に存在します
+    echo   OK Virtual environment already exists.
 )
 
 call venv\Scripts\activate.bat
 if errorlevel 1 (
-    echo   X  仮想環境の有効化に失敗しました
+    echo   X  Failed to activate virtual environment.
     set /a ERRORS+=1
     goto :setup_failed
 )
 
-REM -- Python パッケージ (コア) --
-echo   Python パッケージをインストール中（コア）...
+REM -- Python packages (core) --
+echo   Installing Python packages (core)...
 pip install -q -r requirements.txt
 if errorlevel 1 (
-    echo   X  コアパッケージのインストールに失敗しました
+    echo   X  Core package installation failed.
     set /a ERRORS+=1
 ) else (
-    echo   OK コアパッケージ インストール完了
+    echo   OK Core packages installed.
 )
 
-REM -- Python パッケージ (GUI) --
-echo   Python パッケージをインストール中（GUI）...
+REM -- Python packages (GUI) --
+echo   Installing Python packages (GUI)...
 pip install -q -r requirements-gui.txt 2>nul
 if errorlevel 1 (
-    echo   !  GUIパッケージのインストールに失敗しました（GUIは使えませんがAPIは動作します）
+    echo   !  GUI package installation failed. (GUI unavailable, but API will work.)
     set /a WARNINGS+=1
 ) else (
-    echo   OK GUIパッケージ インストール完了
+    echo   OK GUI packages installed.
 )
 
-REM -- Node.js パッケージ --
+REM -- Node.js packages --
 if "%HAS_NODE%"=="1" (
     if exist "package.json" (
-        echo   Node.js パッケージをインストール中...
+        echo   Installing Node.js packages...
         npm install --silent 2>nul
         if errorlevel 1 (
-            echo   !  Node.js パッケージのインストールに失敗しました
+            echo   !  Node.js package installation failed.
             set /a WARNINGS+=1
         ) else (
-            echo   OK Node.js パッケージ インストール完了
+            echo   OK Node.js packages installed.
         )
     )
 )
 echo.
 
 REM ============================================================
-REM ステップ 3: .env ファイル設定
+REM Step 3: .env configuration
 REM ============================================================
-echo   [3/6] API キーを設定中...
+echo   [3/6] Configuring API keys...
 echo   ----------------------------------------------
 echo.
 
 if exist ".env" (
-    echo   OK .env ファイルは既に存在します（スキップ）
+    echo   OK .env file already exists (skipped).
 ) else (
     if exist ".env.example" (
         copy ".env.example" ".env" > nul
-        echo   OK .env ファイルを作成しました
+        echo   OK .env file created from template.
     ) else (
-        echo # LLM Smart Router 環境設定> ".env"
+        echo # LLM Smart Router Configuration> ".env"
         echo:>> ".env"
-        echo   OK .env ファイルを新規作成しました
+        echo   OK .env file created.
     )
 
     echo:
-    echo   APIキーを設定します。後で設定する場合はそのまま Enter を押してください。
-    echo   （キーは .env ファイルに保存されます）
-    echo   注意: 入力は画面に表示されます。周囲にご注意ください。
+    echo   Enter your API keys below. Press Enter to skip any key.
+    echo   (Keys will be saved to the .env file.)
+    echo   NOTE: Input will be visible on screen.
     echo:
 
     REM -- Anthropic --
@@ -155,9 +153,9 @@ if exist ".env" (
     set /p "KEY_INPUT=   Anthropic API Key (sk-ant-...): "
     if defined KEY_INPUT (
         echo ANTHROPIC_API_KEY=!KEY_INPUT!>> ".env"
-        echo   OK Anthropic API Key を保存しました
+        echo   OK Anthropic API Key saved.
     ) else (
-        echo   -- スキップ
+        echo   -- Skipped
     )
 
     REM -- OpenAI --
@@ -165,9 +163,9 @@ if exist ".env" (
     set /p "KEY_INPUT=   OpenAI API Key (sk-...): "
     if defined KEY_INPUT (
         echo OPENAI_API_KEY=!KEY_INPUT!>> ".env"
-        echo   OK OpenAI API Key を保存しました
+        echo   OK OpenAI API Key saved.
     ) else (
-        echo   -- スキップ
+        echo   -- Skipped
     )
 
     REM -- Google --
@@ -175,9 +173,9 @@ if exist ".env" (
     set /p "KEY_INPUT=   Google API Key: "
     if defined KEY_INPUT (
         echo GOOGLE_API_KEY=!KEY_INPUT!>> ".env"
-        echo   OK Google API Key を保存しました
+        echo   OK Google API Key saved.
     ) else (
-        echo   -- スキップ
+        echo   -- Skipped
     )
 
     REM -- OpenRouter --
@@ -185,17 +183,17 @@ if exist ".env" (
     set /p "KEY_INPUT=   OpenRouter API Key: "
     if defined KEY_INPUT (
         echo OPENROUTER_API_KEY=!KEY_INPUT!>> ".env"
-        echo   OK OpenRouter API Key を保存しました
+        echo   OK OpenRouter API Key saved.
     ) else (
-        echo   -- スキップ
+        echo   -- Skipped
     )
 )
 echo.
 
 REM ============================================================
-REM ステップ 4: ディレクトリ作成
+REM Step 4: Create directories
 REM ============================================================
-echo   [4/6] ディレクトリを準備中...
+echo   [4/6] Preparing directories...
 echo   ----------------------------------------------
 echo.
 
@@ -204,27 +202,24 @@ if not exist "logs" mkdir logs
 if not exist "cache" mkdir cache
 if not exist "queue" mkdir queue
 
-echo   OK data/ logs/ cache/ queue/ を確認しました
+echo   OK data/ logs/ cache/ queue/ verified.
 echo.
 
 REM ============================================================
-REM ステップ 5: 初回モデルスキャン
+REM Step 5: Initial model scan
 REM ============================================================
-echo   [5/6] LLM ランタイムをスキャン中...
+echo   [5/6] Scanning LLM runtimes...
 echo   ----------------------------------------------
 echo.
 
-REM .env があれば許可リストの環境変数のみ読み込む
+REM Load allowed env vars from .env
 if exist ".env" (
     for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
         set "KEY=%%A"
         set "VAL=%%B"
-        REM 空行・コメント行をスキップ
         if defined KEY (
             if not "!KEY:~0,1!"=="#" (
-                REM クオート除去（前後の " を削除）
                 set "VAL=!VAL:"=!"
-                REM 許可リストのキーのみ設定
                 if "!KEY!"=="ANTHROPIC_API_KEY" set "ANTHROPIC_API_KEY=!VAL!"
                 if "!KEY!"=="OPENAI_API_KEY" set "OPENAI_API_KEY=!VAL!"
                 if "!KEY!"=="GOOGLE_API_KEY" set "GOOGLE_API_KEY=!VAL!"
@@ -244,50 +239,50 @@ cd /d "%~dp0"
 echo.
 
 REM ============================================================
-REM ステップ 6: 動作検証
+REM Step 6: Health check
 REM ============================================================
-echo   [6/6] インストールを検証中...
+echo   [6/6] Verifying installation...
 echo   ----------------------------------------------
 echo.
 
 cd /d "%~dp0\src"
 python -m healthcheck 2>nul
 if errorlevel 1 (
-    echo   !  一部のチェックが失敗しました（上の結果を確認してください）
+    echo   !  Some checks failed. See results above.
 )
 cd /d "%~dp0"
 
 echo.
 
 REM ============================================================
-REM 完了
+REM Done
 REM ============================================================
 echo   ======================================================
-echo     セットアップ完了！
+echo     Setup complete!
 echo   ======================================================
 echo.
-echo   次のステップ:
+echo   Next steps:
 echo.
-echo     run_gui.bat        ... GUI アプリを起動
-echo     auto_launch.bat    ... フルチェーン起動（LM Studio + Router + Discord）
-echo     start_server.bat   ... API サーバーのみ起動
+echo     run_gui.bat        ... Launch GUI application
+echo     auto_launch.bat    ... Full chain (LM Studio + Router + Discord)
+echo     start_server.bat   ... API server only
 echo.
-echo   APIキーを後で変更するには .env ファイルを編集してください。
-echo   セットアップの再検証は  python -m healthcheck  で実行できます。
+echo   To change API keys later, edit the .env file.
+echo   To re-verify setup, run:  python -m healthcheck
 echo.
 
 if %ERRORS% gtr 0 (
-    echo   [!] %ERRORS% 個のエラーがあります。上のメッセージを確認してください。
+    echo   [!] %ERRORS% error(s) found. Check messages above.
 )
 if %WARNINGS% gtr 0 (
-    echo   [i] %WARNINGS% 個の警告があります。
+    echo   [i] %WARNINGS% warning(s).
 )
 
 goto :done
 
 :setup_failed
 echo.
-echo   X  セットアップに失敗しました。上のエラーメッセージを確認してください。
+echo   X  Setup failed. Check error messages above.
 echo.
 
 :done
